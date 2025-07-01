@@ -10,7 +10,8 @@ import {
   Moon, 
   Sun,
   Menu,
-  X
+  X,
+  Settings
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -27,6 +28,7 @@ function Navigation() {
     { name: 'Analyseur', href: '/analyseur', icon: Search },
     { name: 'Apprentissage', href: '/apprentissage', icon: BookOpen },
     { name: 'Profil', href: '/profil', icon: User },
+    { name: 'Paramètres', href: '/parametres', icon: Settings },
   ];
 
   const isActive = (href: string) => location.pathname === href;
