@@ -1,0 +1,10 @@
+# Variables d'environnement
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+
+# Autres fichiers sensibles
+*.log
+node_modules/
