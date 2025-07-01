@@ -76,7 +76,7 @@ const password = process.env.DB_PASSWORD;
 
 ```bash
 # Cloner le repository
-git clone https://github.com/votre-equipe/securecode-platform.git
+git clone https://github.com/memehoueibib/securecode-platform.git
 cd securecode-platform
 
 # Installer les dépendances
@@ -188,9 +188,9 @@ Contributions bienvenues ! Voir [CONTRIBUTING.md](CONTRIBUTING.md) pour les guid
 
 ## 📞 **Contact**
 
-- **Repository**: [github.com/votre-equipe/securecode-platform](https://github.com/votre-equipe/securecode-platform)
+- **Repository**: [github.com/memehoueibib/securecode-platform](https://github.com/memehoueibib/securecode-platform)
 - **Démo Live**: [securecode-platform.vercel.app](https://securecode-platform.vercel.app)
-- **Équipe**: [@votre-equipe](https://github.com/votre-equipe)
+- **Équipe**: [@memehoueibib](https://github.com/memehoueibib)
 
 ---
 
