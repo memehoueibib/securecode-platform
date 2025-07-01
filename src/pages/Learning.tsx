@@ -1,0 +1,551 @@
+import React, { useState, useEffect } from 'react';
+import { 
+  BookOpen, 
+  CheckCircle, 
+  Lock, 
+  Play, 
+  ArrowRight,
+  Code,
+  Shield,
+  AlertTriangle,
+  Key,
+  Award,
+  Target
+} from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { LearningService } from '../services/learningService';
+import { LearningProgress as DBLearningProgress } from '../lib/supabase';
+
+interface LearningModule {
+  id: string;
+  title: string;
+  description: string;
+  icon: React.ElementType;
+  difficulty: 'debutant' | 'intermediaire' | 'avance';
+  duration: string;
+  lessons: Lesson[];
+  completed: boolean;
+  locked: boolean;
+  progress: number;
+}
+
+interface Lesson {
+  id: string;
+  title: string;
+  content: string;
+  codeExample: {
+    vulnerable: string;
+    secure: string;
+  };
+  quiz?: {
+    question: string;
+    options: string[];
+    correct: number;
+  };
+}
+
+function Learning() {
+  const { user, profile } = useAuth();
+  const [selectedModule, setSelectedModule] = useState<LearningModule | null>(null);
+  const [currentLesson, setCurrentLesson] = useState(0);
+  const [showQuiz, setShowQuiz] = useState(false);
+  const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
+  const [quizCompleted, setQuizCompleted] = useState(false);
+  const [userProgress, setUserProgress] = useState<DBLearningProgress[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const learningModules: LearningModule[] = [
+    {
+      id: 'xss',
+      title: 'Vulnérabilités XSS',
+      description: 'Apprenez à identifier et prévenir les attaques Cross-Site Scripting',
+      icon: Code,
+      difficulty: 'debutant',
+      duration: '30 min',
+      completed: false,
+      locked: false,
+      progress: 0,
+      lessons: [
+        {
+          id: 'xss-intro',
+          title: 'Introduction aux attaques XSS',
+          content: 'Les attaques XSS (Cross-Site Scripting) permettent aux attaquants d\'injecter du code JavaScript malveillant dans les pages web. Cela peut conduire au vol de cookies, à la redirection d\'utilisateurs ou à l\'exécution d\'actions non autorisées.',
+          codeExample: {
+            vulnerable: `// Code vulnérable
+const userInput = req.body.message;
+document.getElementById('content').innerHTML = userInput;`,
+            secure: `// Code sécurisé
+const userInput = req.body.message;
+document.getElementById('content').textContent = userInput;`
+          },
+          quiz: {
+            question: 'Quelle méthode est sécurisée pour afficher du contenu utilisateur ?',
+            options: ['innerHTML', 'textContent', 'outerHTML', 'document.write'],
+            correct: 1
+          }
+        },
+        {
+          id: 'xss-prevention',
+          title: 'Prévention des attaques XSS',
+          content: 'Pour prévenir les attaques XSS : utilisez textContent au lieu d\'innerHTML, échappez les caractères spéciaux, validez les entrées côté serveur, et implémentez une Content Security Policy (CSP).',
+          codeExample: {
+            vulnerable: `// Danger !
+element.innerHTML = "<p>" + userText + "</p>";`,
+            secure: `// Sécurisé
+element.textContent = userText;
+// Ou avec échappement
+element.innerHTML = "<p>" + escapeHtml(userText) + "</p>";`
+          }
+        }
+      ]
+    },
+    {
+      id: 'injection',
+      title: 'Injection de Code',
+      description: 'Découvrez les risques de eval() et les alternatives sécurisées',
+      icon: AlertTriangle,
+      difficulty: 'intermediaire',
+      duration: '25 min',
+      completed: false,
+      locked: false,
+      progress: 0,
+      lessons: [
+        {
+          id: 'injection-intro',
+          title: 'Dangers de eval() et Function()',
+          content: 'Les fonctions eval() et Function() permettent d\'exécuter du code JavaScript dynamiquement, mais elles sont extrêmement dangereuses car elles peuvent exécuter n\'importe quel code, y compris du code malveillant.',
+          codeExample: {
+            vulnerable: `// Très dangereux !
+const userCode = req.body.code;
+eval(userCode);`,
+            secure: `// Alternative sécurisée pour JSON
+const userData = req.body.data;
+const parsed = JSON.parse(userData);`
+          }
+        }
+      ]
+    },
+    {
+      id: 'secrets',
+      title: 'Gestion des Secrets',
+      description: 'Bonnes pratiques pour gérer les mots de passe et clés API',
+      icon: Key,
+      difficulty: 'debutant',
+      duration: '20 min',
+      completed: false,
+      locked: false,
+      progress: 0,
+      lessons: [
+        {
+          id: 'secrets-intro',
+          title: 'Pourquoi éviter les secrets codés en dur',
+          content: 'Les secrets codés en dur dans le code source peuvent être découverts par les attaquants qui ont accès au code. Ils doivent être stockés dans des variables d\'environnement ou des gestionnaires de secrets.',
+          codeExample: {
+            vulnerable: `// Dangereux !
+const apiKey = "sk-1234567890abcdef";
+const dbPassword = "supersecret123";`,
+            secure: `// Sécurisé
+const apiKey = process.env.API_KEY;
+const dbPassword = process.env.DB_PASSWORD;`
+          }
+        }
+      ]
+    }
+  ];
+
+  useEffect(() => {
+    if (user) {
+      loadUserProgress();
+    }
+  }, [user]);
+
+  const loadUserProgress = async () => {
+    if (!user) return;
+
+    try {
+      setLoading(true);
+      const progress = await LearningService.getUserProgress(user.id);
+      setUserProgress(progress);
+      
+      // Mettre à jour les modules avec la progression
+      learningModules.forEach(module => {
+        const moduleProgress = progress.find(p => p.module_id === module.id);
+        if (moduleProgress) {
+          module.progress = moduleProgress.progression;
+          module.completed = moduleProgress.termine;
+        }
+      });
+    } catch (error) {
+      console.error('Erreur lors du chargement de la progression:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getDifficultyColor = (difficulty: string) => {
+    switch (difficulty) {
+      case 'debutant': return 'bg-green-100 text-green-800';
+      case 'intermediaire': return 'bg-yellow-100 text-yellow-800';
+      case 'avance': return 'bg-red-100 text-red-800';
+      default: return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  const handleStartModule = (module: LearningModule) => {
+    setSelectedModule(module);
+    setCurrentLesson(0);
+    setQuizCompleted(false);
+    setShowQuiz(false);
+    setSelectedAnswer(null);
+  };
+
+  const handleNextLesson = async () => {
+    if (selectedModule && currentLesson < selectedModule.lessons.length - 1) {
+      setCurrentLesson(currentLesson + 1);
+      setShowQuiz(false);
+      setSelectedAnswer(null);
+      setQuizCompleted(false);
+      
+      // Mettre à jour la progression
+      const newProgress = Math.round(((currentLesson + 2) / selectedModule.lessons.length) * 100);
+      await updateProgress(newProgress, false);
+    }
+  };
+
+  const handleCompleteModule = async () => {
+    if (selectedModule && user) {
+      await updateProgress(100, true);
+      await loadUserProgress();
+      setSelectedModule(null);
+    }
+  };
+
+  const updateProgress = async (progression: number, termine: boolean) => {
+    if (!selectedModule || !user) return;
+
+    try {
+      await LearningService.updateModuleProgress(
+        user.id,
+        selectedModule.id,
+        selectedModule.title,
+        progression,
+        termine
+      );
+    } catch (error) {
+      console.error('Erreur lors de la mise à jour de la progression:', error);
+    }
+  };
+
+  const handleQuizAnswer = (answerIndex: number) => {
+    setSelectedAnswer(answerIndex);
+    const currentLessonData = selectedModule?.lessons[currentLesson];
+    if (currentLessonData?.quiz && answerIndex === currentLessonData.quiz.correct) {
+      setQuizCompleted(true);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="animate-pulse space-y-6">
+          <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-1/3"></div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="h-64 bg-gray-200 dark:bg-gray-700 rounded"></div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (selectedModule) {
+    const lesson = selectedModule.lessons[currentLesson];
+    const isLastLesson = currentLesson === selectedModule.lessons.length - 1;
+
+    return (
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="mb-6">
+          <button
+            onClick={() => setSelectedModule(null)}
+            className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 mb-4"
+          >
+            ← Retour aux modules
+          </button>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
+            {selectedModule.title}
+          </h1>
+          <div className="flex items-center space-x-4 mt-2">
+            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getDifficultyColor(selectedModule.difficulty)}`}>
+              {selectedModule.difficulty}
+            </span>
+            <span className="text-sm text-gray-600 dark:text-gray-400">
+              Leçon {currentLesson + 1} sur {selectedModule.lessons.length}
+            </span>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
+          <div className="p-8">
+            <h2 className="text-2xl font-semibold text-gray-900 dark:text-white mb-6">
+              {lesson.title}
+            </h2>
+            
+            <div className="prose dark:prose-invert max-w-none mb-8">
+              <p className="text-gray-700 dark:text-gray-300 leading-relaxed">
+                {lesson.content}
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+              <div>
+                <h3 className="text-lg font-semibold text-red-600 dark:text-red-400 mb-3">
+                  ❌ Code Vulnérable
+                </h3>
+                <div className="bg-red-50 dark:bg-red-900 p-4 rounded-lg">
+                  <pre className="text-sm text-red-800 dark:text-red-300 overflow-x-auto">
+                    <code>{lesson.codeExample.vulnerable}</code>
+                  </pre>
+                </div>
+              </div>
+              
+              <div>
+                <h3 className="text-lg font-semibold text-green-600 dark:text-green-400 mb-3">
+                  ✅ Code Sécurisé
+                </h3>
+                <div className="bg-green-50 dark:bg-green-900 p-4 rounded-lg">
+                  <pre className="text-sm text-green-800 dark:text-green-300 overflow-x-auto">
+                    <code>{lesson.codeExample.secure}</code>
+                  </pre>
+                </div>
+              </div>
+            </div>
+
+            {lesson.quiz && !showQuiz && (
+              <div className="text-center">
+                <button
+                  onClick={() => setShowQuiz(true)}
+                  className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Passer au Quiz
+                </button>
+              </div>
+            )}
+
+            {lesson.quiz && showQuiz && (
+              <div className="bg-blue-50 dark:bg-blue-900 p-6 rounded-lg">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+                  Quiz
+                </h3>
+                <p className="text-gray-700 dark:text-gray-300 mb-4">
+                  {lesson.quiz.question}
+                </p>
+                <div className="space-y-3">
+                  {lesson.quiz.options.map((option, index) => (
+                    <button
+                      key={index}
+                      onClick={() => handleQuizAnswer(index)}
+                      className={`w-full text-left p-3 rounded-lg border transition-colors ${
+                        selectedAnswer === index
+                          ? selectedAnswer === lesson.quiz!.correct
+                            ? 'bg-green-100 border-green-500 text-green-800'
+                            : 'bg-red-100 border-red-500 text-red-800'
+                          : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600'
+                      }`}
+                      disabled={selectedAnswer !== null}
+                    >
+                      {option}
+                    </button>
+                  ))}
+                </div>
+                
+                {selectedAnswer !== null && (
+                  <div className="mt-4">
+                    {quizCompleted ? (
+                      <p className="text-green-600 dark:text-green-400 font-medium">
+                        ✅ Bonne réponse ! +10 points
+                      </p>
+                    ) : (
+                      <p className="text-red-600 dark:text-red-400 font-medium">
+                        ❌ Mauvaise réponse. La bonne réponse était : {lesson.quiz.options[lesson.quiz.correct]}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex justify-between mt-8 pt-6 border-t border-gray-200 dark:border-gray-700">
+              <div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div 
+                    className="bg-blue-600 h-2 rounded-full transition-all"
+                    style={{ width: `${((currentLesson + 1) / selectedModule.lessons.length) * 100}%` }}
+                  ></div>
+                </div>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">
+                  Progression: {currentLesson + 1}/{selectedModule.lessons.length}
+                </p>
+              </div>
+              
+              <div>
+                {!isLastLesson ? (
+                  <button
+                    onClick={handleNextLesson}
+                    disabled={lesson.quiz && showQuiz && selectedAnswer === null}
+                    className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors flex items-center"
+                  >
+                    Suivant
+                    <ArrowRight className="h-4 w-4 ml-2" />
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleCompleteModule}
+                    disabled={lesson.quiz && showQuiz && selectedAnswer === null}
+                    className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Terminer le Module (+50 points)
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
+          Modules d'Apprentissage
+        </h1>
+        <p className="mt-2 text-gray-600 dark:text-gray-400">
+          Apprenez les bonnes pratiques de sécurité avec nos modules interactifs
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {learningModules.map((module) => {
+          const Icon = module.icon;
+          const moduleProgress = userProgress.find(p => p.module_id === module.id);
+          const isCompleted = moduleProgress?.termine || false;
+          const progress = moduleProgress?.progression || 0;
+          
+          return (
+            <div
+              key={module.id}
+              className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6 hover:shadow-md transition-shadow"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <div className="p-3 bg-blue-100 dark:bg-blue-900 rounded-lg">
+                  <Icon className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+                </div>
+                {isCompleted && (
+                  <CheckCircle className="h-6 w-6 text-green-500" />
+                )}
+                {module.locked && (
+                  <Lock className="h-6 w-6 text-gray-400" />
+                )}
+              </div>
+              
+              <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+                {module.title}
+              </h3>
+              
+              <p className="text-gray-600 dark:text-gray-400 mb-4 text-sm">
+                {module.description}
+              </p>
+              
+              <div className="flex items-center justify-between mb-4">
+                <span className={`px-2 py-1 rounded-full text-xs font-medium ${getDifficultyColor(module.difficulty)}`}>
+                  {module.difficulty}
+                </span>
+                <span className="text-sm text-gray-500 dark:text-gray-400">
+                  {module.duration}
+                </span>
+              </div>
+
+              {progress > 0 && (
+                <div className="mb-4">
+                  <div className="flex justify-between text-xs text-gray-600 dark:text-gray-400 mb-1">
+                    <span>Progression</span>
+                    <span>{progress}%</span>
+                  </div>
+                  <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                    <div 
+                      className="bg-blue-600 h-2 rounded-full transition-all"
+                      style={{ width: `${progress}%` }}
+                    ></div>
+                  </div>
+                </div>
+              )}
+              
+              <button
+                onClick={() => handleStartModule(module)}
+                disabled={module.locked}
+                className="w-full flex items-center justify-center px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-medium rounded-lg transition-colors"
+              >
+                {isCompleted ? (
+                  <>
+                    <CheckCircle className="h-4 w-4 mr-2" />
+                    Revoir
+                  </>
+                ) : module.locked ? (
+                  <>
+                    <Lock className="h-4 w-4 mr-2" />
+                    Verrouillé
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 mr-2" />
+                    {progress > 0 ? 'Continuer' : 'Commencer'}
+                  </>
+                )}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Statistiques de progression */}
+      <div className="mt-12 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-6">
+          Votre Progression
+        </h2>
+        
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="text-center">
+            <div className="text-3xl font-bold text-blue-600 dark:text-blue-400">
+              {userProgress.filter(p => p.termine).length}
+            </div>
+            <div className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+              Modules Terminés
+            </div>
+          </div>
+          
+          <div className="text-center">
+            <div className="text-3xl font-bold text-green-600 dark:text-green-400">
+              {profile?.points || 0}
+            </div>
+            <div className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+              Points Gagnés
+            </div>
+          </div>
+          
+          <div className="text-center">
+            <div className="text-3xl font-bold text-purple-600 dark:text-purple-400">
+              {Math.round((userProgress.filter(p => p.termine).length / learningModules.length) * 100)}%
+            </div>
+            <div className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+              Progression Globale
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default Learning;
