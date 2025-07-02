@@ -40,7 +40,7 @@ function Register() {
     }
 
     setIsLoading(true);
-    
+     // Chiffrement de l’email avant envoi à ajouter ici je pense
     const { error } = await signUp(formData.email, formData.password, formData.nom);
     
     if (!error) {
