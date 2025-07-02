@@ -1,3 +1,5 @@
+import { AdminSyncService } from './adminSyncService';
+
 export interface AIAnalysisConfig {
   provider: string;
   apiKey: string;
@@ -65,7 +67,13 @@ export class AIAnalysisService {
     config: AIAnalysisConfig
   ): Promise<any> {
     try {
-      const prompt = this.buildAnalysisPrompt(code, language);
+      // Récupérer le prompt template depuis la base de données
+      const promptTemplate = await AdminSyncService.getActivePromptTemplate(language);
+      
+      // Utiliser le prompt de la base de données ou le prompt par défaut
+      const prompt = promptTemplate 
+        ? this.replacePromptVariables(promptTemplate.prompt, { code, language })
+        : this.buildAnalysisPrompt(code, language);
       
       switch (config.provider) {
         case 'openai':
@@ -85,6 +93,17 @@ export class AIAnalysisService {
       console.error('Erreur lors de l\'analyse IA:', error);
       throw error;
     }
+  }
+
+  private static replacePromptVariables(promptTemplate: string, variables: Record<string, any>): string {
+    let prompt = promptTemplate;
+    
+    // Remplacer les variables dans le template
+    Object.entries(variables).forEach(([key, value]) => {
+      prompt = prompt.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value);
+    });
+    
+    return prompt;
   }
 
   private static buildAnalysisPrompt(code: string, language: string): string {

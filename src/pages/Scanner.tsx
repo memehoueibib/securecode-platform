@@ -23,6 +23,7 @@ import { useNavigate } from 'react-router-dom';
 import { AnalysisService } from '../services/analysisService';
 import { CodeAnalyse, Vulnerability as DBVulnerability } from '../lib/supabase';
 import { scanCode, exampleVulnerableCode, Vulnerability } from '../services/vulnerabilityScanner';
+import { APIConfigService } from '../services/apiConfigService';
 import CodeEditor from '../components/CodeEditor';
 import VulnerabilityModal from '../components/VulnerabilityModal';
 import SecurityMetrics from '../components/SecurityMetrics';
@@ -47,10 +48,13 @@ function Scanner() {
     scoreMoyen: 85,
     tendance: '+12%'
   });
+  const [useAI, setUseAI] = useState(false);
+  const [hasActiveAIConfig, setHasActiveAIConfig] = useState(false);
 
   useEffect(() => {
     if (user) {
       loadScanHistory();
+      checkAIConfig();
     } else {
       setLoading(false);
     }
@@ -73,22 +77,30 @@ function Scanner() {
     }
   };
 
+  const checkAIConfig = async () => {
+    if (!user) return;
+    
+    try {
+      const config = await APIConfigService.getActiveAPIConfig(user.id);
+      setHasActiveAIConfig(!!config);
+    } catch (error) {
+      console.error('Erreur lors de la vérification de la configuration IA:', error);
+    }
+  };
+
   const handleScan = async () => {
     if (!code.trim() || !user) return;
 
     setIsScanning(true);
     
     try {
-      // Simuler un délai de traitement
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      // Créer l'analyse dans la base de données
+      // Créer l'analyse dans la base de données avec l'option IA si activée
       const result = await AnalysisService.createAnalysis(
         user.id,
         fileName || 'code.js',
         code,
         'javascript',
-        false // Pas d'IA pour l'instant
+        useAI
       );
       
       if (result) {
@@ -424,6 +436,23 @@ function Scanner() {
             onFileNameChange={setFileName}
           />
 
+          {/* Option d'analyse IA */}
+          {hasActiveAIConfig && (
+            <div className="flex items-center space-x-2 bg-purple-50 dark:bg-purple-900 p-3 rounded-lg">
+              <input
+                type="checkbox"
+                id="useAI"
+                checked={useAI}
+                onChange={() => setUseAI(!useAI)}
+                className="h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
+              />
+              <label htmlFor="useAI" className="text-sm text-purple-800 dark:text-purple-300 flex items-center">
+                <Brain className="h-4 w-4 mr-1" />
+                Utiliser l'analyse IA avancée
+              </label>
+            </div>
+          )}
+
           {/* Actions rapides */}
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
@@ -577,6 +606,23 @@ function Scanner() {
                   <span className="text-sm font-medium">Voir l'historique</span>
                 </div>
               </button>
+              {hasActiveAIConfig && (
+                <button 
+                  onClick={() => setUseAI(!useAI)}
+                  className={`w-full text-left px-4 py-3 ${
+                    useAI 
+                      ? 'bg-purple-100 dark:bg-purple-800 text-purple-800 dark:text-purple-200' 
+                      : 'bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+                  } rounded-lg hover:bg-purple-100 dark:hover:bg-purple-800 transition-colors`}
+                >
+                  <div className="flex items-center">
+                    <Brain className="h-5 w-5 mr-3" />
+                    <span className="text-sm font-medium">
+                      {useAI ? 'Analyse IA activée' : 'Activer l\'analyse IA'}
+                    </span>
+                  </div>
+                </button>
+              )}
             </div>
           </div>
         </div>

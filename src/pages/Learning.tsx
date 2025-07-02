@@ -15,6 +15,7 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { LearningService } from '../services/learningService';
 import { LearningProgress as DBLearningProgress } from '../lib/supabase';
+import { LearningModule as AdminLearningModule } from '../types/admin';
 
 interface LearningModule {
   id: string;
@@ -53,109 +54,13 @@ function Learning() {
   const [quizCompleted, setQuizCompleted] = useState(false);
   const [userProgress, setUserProgress] = useState<DBLearningProgress[]>([]);
   const [loading, setLoading] = useState(true);
-
-  const learningModules: LearningModule[] = [
-    {
-      id: 'xss',
-      title: 'Vulnérabilités XSS',
-      description: 'Apprenez à identifier et prévenir les attaques Cross-Site Scripting',
-      icon: Code,
-      difficulty: 'debutant',
-      duration: '30 min',
-      completed: false,
-      locked: false,
-      progress: 0,
-      lessons: [
-        {
-          id: 'xss-intro',
-          title: 'Introduction aux attaques XSS',
-          content: 'Les attaques XSS (Cross-Site Scripting) permettent aux attaquants d\'injecter du code JavaScript malveillant dans les pages web. Cela peut conduire au vol de cookies, à la redirection d\'utilisateurs ou à l\'exécution d\'actions non autorisées.',
-          codeExample: {
-            vulnerable: `// Code vulnérable
-const userInput = req.body.message;
-document.getElementById('content').innerHTML = userInput;`,
-            secure: `// Code sécurisé
-const userInput = req.body.message;
-document.getElementById('content').textContent = userInput;`
-          },
-          quiz: {
-            question: 'Quelle méthode est sécurisée pour afficher du contenu utilisateur ?',
-            options: ['innerHTML', 'textContent', 'outerHTML', 'document.write'],
-            correct: 1
-          }
-        },
-        {
-          id: 'xss-prevention',
-          title: 'Prévention des attaques XSS',
-          content: 'Pour prévenir les attaques XSS : utilisez textContent au lieu d\'innerHTML, échappez les caractères spéciaux, validez les entrées côté serveur, et implémentez une Content Security Policy (CSP).',
-          codeExample: {
-            vulnerable: `// Danger !
-element.innerHTML = "<p>" + userText + "</p>";`,
-            secure: `// Sécurisé
-element.textContent = userText;
-// Ou avec échappement
-element.innerHTML = "<p>" + escapeHtml(userText) + "</p>";`
-          }
-        }
-      ]
-    },
-    {
-      id: 'injection',
-      title: 'Injection de Code',
-      description: 'Découvrez les risques de eval() et les alternatives sécurisées',
-      icon: AlertTriangle,
-      difficulty: 'intermediaire',
-      duration: '25 min',
-      completed: false,
-      locked: false,
-      progress: 0,
-      lessons: [
-        {
-          id: 'injection-intro',
-          title: 'Dangers de eval() et Function()',
-          content: 'Les fonctions eval() et Function() permettent d\'exécuter du code JavaScript dynamiquement, mais elles sont extrêmement dangereuses car elles peuvent exécuter n\'importe quel code, y compris du code malveillant.',
-          codeExample: {
-            vulnerable: `// Très dangereux !
-const userCode = req.body.code;
-eval(userCode);`,
-            secure: `// Alternative sécurisée pour JSON
-const userData = req.body.data;
-const parsed = JSON.parse(userData);`
-          }
-        }
-      ]
-    },
-    {
-      id: 'secrets',
-      title: 'Gestion des Secrets',
-      description: 'Bonnes pratiques pour gérer les mots de passe et clés API',
-      icon: Key,
-      difficulty: 'debutant',
-      duration: '20 min',
-      completed: false,
-      locked: false,
-      progress: 0,
-      lessons: [
-        {
-          id: 'secrets-intro',
-          title: 'Pourquoi éviter les secrets codés en dur',
-          content: 'Les secrets codés en dur dans le code source peuvent être découverts par les attaquants qui ont accès au code. Ils doivent être stockés dans des variables d\'environnement ou des gestionnaires de secrets.',
-          codeExample: {
-            vulnerable: `// Dangereux !
-const apiKey = "sk-1234567890abcdef";
-const dbPassword = "supersecret123";`,
-            secure: `// Sécurisé
-const apiKey = process.env.API_KEY;
-const dbPassword = process.env.DB_PASSWORD;`
-          }
-        }
-      ]
-    }
-  ];
+  const [adminModules, setAdminModules] = useState<AdminLearningModule[]>([]);
+  const [learningModules, setLearningModules] = useState<LearningModule[]>([]);
 
   useEffect(() => {
     if (user) {
       loadUserProgress();
+      loadAdminModules();
     }
   }, [user]);
 
@@ -166,20 +71,83 @@ const dbPassword = process.env.DB_PASSWORD;`
       setLoading(true);
       const progress = await LearningService.getUserProgress(user.id);
       setUserProgress(progress);
-      
-      // Mettre à jour les modules avec la progression
-      learningModules.forEach(module => {
-        const moduleProgress = progress.find(p => p.module_id === module.id);
-        if (moduleProgress) {
-          module.progress = moduleProgress.progression;
-          module.completed = moduleProgress.termine;
-        }
-      });
     } catch (error) {
       console.error('Erreur lors du chargement de la progression:', error);
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadAdminModules = async () => {
+    try {
+      // Charger les modules depuis la base de données
+      const modules = await LearningService.getAllLearningModules();
+      setAdminModules(modules);
+      
+      // Convertir les modules admin en format utilisateur
+      const convertedModules = modules.map(module => convertAdminModule(module));
+      setLearningModules(convertedModules);
+    } catch (error) {
+      console.error('Erreur lors du chargement des modules:', error);
+    }
+  };
+
+  // Convertir un module admin en format utilisateur
+  const convertAdminModule = (adminModule: AdminLearningModule): LearningModule => {
+    // Déterminer l'icône en fonction de la catégorie
+    let icon: React.ElementType = BookOpen;
+    if (adminModule.title.toLowerCase().includes('xss')) {
+      icon = Code;
+    } else if (adminModule.title.toLowerCase().includes('injection')) {
+      icon = AlertTriangle;
+    } else if (adminModule.title.toLowerCase().includes('secret')) {
+      icon = Key;
+    }
+    
+    // Convertir la difficulté
+    let difficulty: 'debutant' | 'intermediaire' | 'avance' = 'debutant';
+    if (adminModule.difficulty === 'intermediate') {
+      difficulty = 'intermediaire';
+    } else if (adminModule.difficulty === 'advanced') {
+      difficulty = 'avance';
+    }
+    
+    // Récupérer la progression de l'utilisateur
+    const progress = userProgress.find(p => p.module_id === adminModule.id);
+    
+    // Convertir les leçons
+    const lessons: Lesson[] = [];
+    if (adminModule.content && adminModule.content.lessons) {
+      adminModule.content.lessons.forEach((lesson: any, index: number) => {
+        lessons.push({
+          id: `${adminModule.id}-lesson-${index}`,
+          title: lesson.title || `Leçon ${index + 1}`,
+          content: lesson.content || '',
+          codeExample: {
+            vulnerable: lesson.codeExample?.vulnerable || '',
+            secure: lesson.codeExample?.secure || ''
+          },
+          quiz: lesson.quiz ? {
+            question: lesson.quiz.question || '',
+            options: lesson.quiz.options || [],
+            correct: lesson.quiz.correct || 0
+          } : undefined
+        });
+      });
+    }
+    
+    return {
+      id: adminModule.id || `module-${Date.now()}`,
+      title: adminModule.title,
+      description: adminModule.description,
+      icon,
+      difficulty,
+      duration: `${adminModule.estimatedDuration || 30} min`,
+      lessons,
+      completed: progress?.termine || false,
+      locked: false,
+      progress: progress?.progression || 0
+    };
   };
 
   const getDifficultyColor = (difficulty: string) => {
@@ -427,86 +395,95 @@ const dbPassword = process.env.DB_PASSWORD;`
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {learningModules.map((module) => {
-          const Icon = module.icon;
-          const moduleProgress = userProgress.find(p => p.module_id === module.id);
-          const isCompleted = moduleProgress?.termine || false;
-          const progress = moduleProgress?.progression || 0;
-          
-          return (
-            <div
-              key={module.id}
-              className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6 hover:shadow-md transition-shadow"
-            >
-              <div className="flex items-center justify-between mb-4">
-                <div className="p-3 bg-blue-100 dark:bg-blue-900 rounded-lg">
-                  <Icon className="h-6 w-6 text-blue-600 dark:text-blue-400" />
-                </div>
-                {isCompleted && (
-                  <CheckCircle className="h-6 w-6 text-green-500" />
-                )}
-                {module.locked && (
-                  <Lock className="h-6 w-6 text-gray-400" />
-                )}
-              </div>
-              
-              <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
-                {module.title}
-              </h3>
-              
-              <p className="text-gray-600 dark:text-gray-400 mb-4 text-sm">
-                {module.description}
-              </p>
-              
-              <div className="flex items-center justify-between mb-4">
-                <span className={`px-2 py-1 rounded-full text-xs font-medium ${getDifficultyColor(module.difficulty)}`}>
-                  {module.difficulty}
-                </span>
-                <span className="text-sm text-gray-500 dark:text-gray-400">
-                  {module.duration}
-                </span>
-              </div>
-
-              {progress > 0 && (
-                <div className="mb-4">
-                  <div className="flex justify-between text-xs text-gray-600 dark:text-gray-400 mb-1">
-                    <span>Progression</span>
-                    <span>{progress}%</span>
-                  </div>
-                  <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                    <div 
-                      className="bg-blue-600 h-2 rounded-full transition-all"
-                      style={{ width: `${progress}%` }}
-                    ></div>
-                  </div>
-                </div>
-              )}
-              
-              <button
-                onClick={() => handleStartModule(module)}
-                disabled={module.locked}
-                className="w-full flex items-center justify-center px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-medium rounded-lg transition-colors"
+        {learningModules.length === 0 ? (
+          <div className="col-span-3 text-center py-12">
+            <BookOpen className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+            <p className="text-gray-500 dark:text-gray-400">
+              Aucun module d'apprentissage disponible pour le moment
+            </p>
+          </div>
+        ) : (
+          learningModules.map((module) => {
+            const Icon = module.icon;
+            const moduleProgress = userProgress.find(p => p.module_id === module.id);
+            const isCompleted = moduleProgress?.termine || false;
+            const progress = moduleProgress?.progression || 0;
+            
+            return (
+              <div
+                key={module.id}
+                className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6 hover:shadow-md transition-shadow"
               >
-                {isCompleted ? (
-                  <>
-                    <CheckCircle className="h-4 w-4 mr-2" />
-                    Revoir
-                  </>
-                ) : module.locked ? (
-                  <>
-                    <Lock className="h-4 w-4 mr-2" />
-                    Verrouillé
-                  </>
-                ) : (
-                  <>
-                    <Play className="h-4 w-4 mr-2" />
-                    {progress > 0 ? 'Continuer' : 'Commencer'}
-                  </>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="p-3 bg-blue-100 dark:bg-blue-900 rounded-lg">
+                    <Icon className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+                  </div>
+                  {isCompleted && (
+                    <CheckCircle className="h-6 w-6 text-green-500" />
+                  )}
+                  {module.locked && (
+                    <Lock className="h-6 w-6 text-gray-400" />
+                  )}
+                </div>
+                
+                <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+                  {module.title}
+                </h3>
+                
+                <p className="text-gray-600 dark:text-gray-400 mb-4 text-sm">
+                  {module.description}
+                </p>
+                
+                <div className="flex items-center justify-between mb-4">
+                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${getDifficultyColor(module.difficulty)}`}>
+                    {module.difficulty}
+                  </span>
+                  <span className="text-sm text-gray-500 dark:text-gray-400">
+                    {module.duration}
+                  </span>
+                </div>
+
+                {progress > 0 && (
+                  <div className="mb-4">
+                    <div className="flex justify-between text-xs text-gray-600 dark:text-gray-400 mb-1">
+                      <span>Progression</span>
+                      <span>{progress}%</span>
+                    </div>
+                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                      <div 
+                        className="bg-blue-600 h-2 rounded-full transition-all"
+                        style={{ width: `${progress}%` }}
+                      ></div>
+                    </div>
+                  </div>
                 )}
-              </button>
-            </div>
-          );
-        })}
+                
+                <button
+                  onClick={() => handleStartModule(module)}
+                  disabled={module.locked}
+                  className="w-full flex items-center justify-center px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-medium rounded-lg transition-colors"
+                >
+                  {isCompleted ? (
+                    <>
+                      <CheckCircle className="h-4 w-4 mr-2" />
+                      Revoir
+                    </>
+                  ) : module.locked ? (
+                    <>
+                      <Lock className="h-4 w-4 mr-2" />
+                      Verrouillé
+                    </>
+                  ) : (
+                    <>
+                      <Play className="h-4 w-4 mr-2" />
+                      {progress > 0 ? 'Continuer' : 'Commencer'}
+                    </>
+                  )}
+                </button>
+              </div>
+            );
+          })
+        )}
       </div>
 
       {/* Statistiques de progression */}
@@ -536,7 +513,7 @@ const dbPassword = process.env.DB_PASSWORD;`
           
           <div className="text-center">
             <div className="text-3xl font-bold text-purple-600 dark:text-purple-400">
-              {Math.round((userProgress.filter(p => p.termine).length / learningModules.length) * 100)}%
+              {Math.round((userProgress.filter(p => p.termine).length / Math.max(learningModules.length, 1)) * 100)}%
             </div>
             <div className="text-sm text-gray-600 dark:text-gray-400 mt-1">
               Progression Globale

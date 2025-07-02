@@ -12,7 +12,9 @@ import {
   Calendar,
   Target,
   Zap,
-  ArrowRight
+  ArrowRight,
+  Loader,
+  RefreshCw
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -21,50 +23,78 @@ import { LearningService } from '../services/learningService';
 import { CodeAnalyse, Achievement } from '../lib/supabase';
 import SecurityMetrics from '../components/SecurityMetrics';
 import LearningProgress from '../components/LearningProgress';
+import { useAdminSync } from '../hooks/useAdminSync';
 
 function Dashboard() {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
+  const { lastSync, syncStatus, forcSync } = useAdminSync();
   const [analyses, setAnalyses] = useState<CodeAnalyse[]>([]);
   const [achievements, setAchievements] = useState<Achievement[]>([]);
   const [stats, setStats] = useState({
     totalAnalyses: 0,
     totalVulnerabilites: 0,
-    scoreSecutite: 85,
+    scoreMoyen: 85,
     tendance: '+12%'
   });
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
+  // Utiliser useEffect avec dépendances correctes pour éviter la boucle infinie
   useEffect(() => {
-    if (user) {
-      loadDashboardData();
-    }
-  }, [user]);
+    let isMounted = true;
 
-  const loadDashboardData = async () => {
-    if (!user) return;
+    const loadDashboardData = async () => {
+      if (!user?.id) return;
 
-    try {
-      setLoading(true);
-      
-      // Charger les analyses
-      const userAnalyses = await AnalysisService.getUserAnalyses(user.id);
-      setAnalyses(userAnalyses);
-      
-      // Charger les statistiques
-      const analysisStats = await AnalysisService.getAnalysisStats(user.id);
-      setStats(analysisStats);
-      
-      // Charger les réalisations
-      const userAchievements = await LearningService.getUserAchievements(user.id);
-      setAchievements(userAchievements);
-      
-    } catch (error) {
-      console.error('Erreur lors du chargement des données:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+      try {
+        console.log('🔄 Chargement des données du dashboard pour:', user.email);
+        setLoading(true);
+        setError(null);
+        
+        // Charger les analyses
+        console.log('📊 Chargement des analyses...');
+        const userAnalyses = await AnalysisService.getUserAnalyses(user.id);
+        if (isMounted) {
+          setAnalyses(userAnalyses);
+          console.log('✅ Analyses chargées:', userAnalyses.length);
+        }
+        
+        // Charger les statistiques
+        console.log('📈 Chargement des statistiques...');
+        const analysisStats = await AnalysisService.getAnalysisStats(user.id);
+        if (isMounted) {
+          setStats(analysisStats);
+          console.log('✅ Statistiques chargées:', analysisStats);
+        }
+        
+        // Charger les réalisations
+        console.log('🏆 Chargement des réalisations...');
+        const userAchievements = await LearningService.getUserAchievements(user.id);
+        if (isMounted) {
+          setAchievements(userAchievements);
+          console.log('✅ Réalisations chargées:', userAchievements.length);
+        }
+        
+      } catch (error) {
+        console.error('❌ Erreur lors du chargement des données:', error);
+        if (isMounted) {
+          setError('Erreur lors du chargement des données');
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadDashboardData();
+
+    // Cleanup function pour éviter les fuites mémoire
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.id]); // Dépendance uniquement sur user.id
 
   const StatCard = ({ title, value, icon: Icon, color, trend, description, onClick }: any) => (
     <div 
@@ -118,6 +148,12 @@ function Dashboard() {
             <p className="text-gray-500 dark:text-gray-400">
               Aucune activité récente
             </p>
+            <button
+              onClick={() => navigate('/analyseur')}
+              className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              Commencer une analyse
+            </button>
           </div>
         ) : (
           <div className="space-y-4">
@@ -197,7 +233,7 @@ function Dashboard() {
     return { niveau: 'Débutant', prochainNiveau: 'Intermédiaire', progression: points / 50 * 100 };
   };
 
-  const progressStats = getProgressionStats();
+  const progressionStats = getProgressionStats();
 
   // Données pour SecurityMetrics
   const recentScansForMetrics = analyses.slice(0, 5).map(scan => ({
@@ -210,13 +246,31 @@ function Dashboard() {
   if (loading) {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="animate-pulse space-y-6">
-          <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-1/3"></div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {[...Array(4)].map((_, i) => (
-              <div key={i} className="h-32 bg-gray-200 dark:bg-gray-700 rounded"></div>
-            ))}
+        <div className="flex items-center justify-center min-h-96">
+          <div className="text-center">
+            <Loader className="h-8 w-8 animate-spin text-red-600 mx-auto mb-4" />
+            <p className="text-gray-600 dark:text-gray-400">Chargement de vos données...</p>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="text-center">
+          <AlertTriangle className="h-12 w-12 text-red-600 mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+            Erreur de chargement
+          </h2>
+          <p className="text-gray-600 dark:text-gray-400 mb-4">{error}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            Réessayer
+          </button>
         </div>
       </div>
     );
@@ -224,7 +278,7 @@ function Dashboard() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* En-tête avec salutation personnalisée */}
+      {/* En-tête avec salutation personnalisée et indicateur de sync */}
       <div className="mb-8">
         <div className="flex items-center justify-between">
           <div>
@@ -239,13 +293,44 @@ function Dashboard() {
             <div className="text-right">
               <p className="text-sm text-gray-600 dark:text-gray-400">Niveau actuel</p>
               <p className="text-lg font-semibold text-blue-600 dark:text-blue-400">
-                {progressStats.niveau}
+                {progressionStats.niveau}
               </p>
             </div>
             <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900 rounded-full flex items-center justify-center">
               <Award className="h-6 w-6 text-blue-600 dark:text-blue-400" />
             </div>
           </div>
+        </div>
+
+        {/* Indicateur de synchronisation */}
+        <div className="mt-4 flex items-center space-x-4">
+          <div className={`flex items-center space-x-2 px-3 py-1 rounded-full text-xs ${
+            syncStatus === 'success' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300' :
+            syncStatus === 'syncing' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300' :
+            syncStatus === 'error' ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300' :
+            'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300'
+          }`}>
+            {syncStatus === 'syncing' && <Loader className="h-3 w-3 animate-spin" />}
+            {syncStatus === 'success' && <CheckCircle className="h-3 w-3" />}
+            {syncStatus === 'error' && <AlertTriangle className="h-3 w-3" />}
+            <span>
+              {syncStatus === 'syncing' ? 'Synchronisation...' :
+               syncStatus === 'success' ? 'Synchronisé' :
+               syncStatus === 'error' ? 'Erreur sync' : 'En attente'}
+            </span>
+          </div>
+          {lastSync && (
+            <span className="text-xs text-gray-500 dark:text-gray-400">
+              Dernière sync: {lastSync.toLocaleTimeString('fr-FR')}
+            </span>
+          )}
+          <button
+            onClick={forcSync}
+            className="text-xs text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 flex items-center"
+          >
+            <RefreshCw className="h-3 w-3 mr-1" />
+            Forcer sync
+          </button>
         </div>
       </div>
 
@@ -409,9 +494,9 @@ function Dashboard() {
           <LearningProgress
             modules={learningModules}
             totalPoints={profile?.points || 0}
-            currentLevel={progressStats.niveau}
-            nextLevel={progressStats.prochainNiveau}
-            progressToNext={progressStats.progression}
+            currentLevel={progressionStats.niveau}
+            nextLevel={progressionStats.prochainNiveau}
+            progressToNext={progressionStats.progression}
           />
         </div>
       </div>

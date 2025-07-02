@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase, Profile } from '../lib/supabase';
 import { User, Session } from '@supabase/supabase-js';
+import { SecurityService } from '../services/securityService';
 
 interface AuthContextType {
   user: User | null;
@@ -8,11 +9,16 @@ interface AuthContextType {
   session: Session | null;
   loading: boolean;
   error: string | null;
+  isAdmin: boolean;
+  mfaEnabled: boolean;
   signUp: (email: string, password: string, nom: string) => Promise<{ error: any }>;
-  signIn: (email: string, password: string) => Promise<{ error: any }>;
+  signIn: (email: string, password: string) => Promise<{ error: any; requiresMFA?: boolean }>;
   signOut: () => Promise<void>;
   updateProfile: (updates: Partial<Profile>) => Promise<void>;
   clearError: () => void;
+  setupMFA: () => Promise<{ qrCode: string; secret: string } | null>;
+  verifyMFA: (token: string) => Promise<boolean>;
+  disableMFA: () => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -23,188 +29,184 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [mfaEnabled, setMfaEnabled] = useState(false);
 
   useEffect(() => {
-    let mounted = true;
+    // Timeout de sécurité pour éviter le loading infini
+    const timeout = setTimeout(() => {
+      setLoading(false);
+    }, 3000);
 
-    const initializeAuth = async () => {
-      try {
-        console.log('🚀 Initialisation de l\'authentification...');
+    initAuth();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('🔄 Auth state change:', event, session?.user?.email);
+      
+      if (event === 'SIGNED_OUT') {
+        // Nettoyage immédiat lors de la déconnexion
+        console.log('🧹 Nettoyage après déconnexion Supabase');
+        setUser(null);
+        setSession(null);
+        setProfile(null);
+        setIsAdmin(false);
+        setError(null);
+        setMfaEnabled(false);
         
-        // Vérifier la configuration Supabase
-        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-        const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+        // Effacer l'état MFA persisté
+        SecurityService.clearPersistedMFAState();
+      } else if (session) {
+        console.log('👤 Utilisateur connecté:', session.user.email);
+        setSession(session);
+        setUser(session.user);
+        await loadProfile(session.user);
         
-        console.log('🔍 Configuration Supabase:');
-        console.log('- URL présente:', !!supabaseUrl);
-        console.log('- Clé présente:', !!supabaseKey);
-
-        if (!supabaseUrl || !supabaseKey) {
-          throw new Error('Variables d\'environnement Supabase manquantes. Vérifiez votre fichier .env.local');
-        }
-
-        // Récupérer la session
-        console.log('📡 Récupération de la session...');
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-
-        if (sessionError) {
-          console.error('❌ Erreur lors de la récupération de la session:', sessionError);
-          if (sessionError.message.includes('Invalid API key')) {
-            throw new Error('Clé API Supabase invalide. Vérifiez votre VITE_SUPABASE_ANON_KEY');
+        // Vérifier si MFA est activé
+        const mfaStatus = await SecurityService.checkMFAStatus(session.user.id);
+        setMfaEnabled(mfaStatus);
+        
+        // Persister l'état MFA
+        if (mfaStatus) {
+          const { data: factors } = await supabase.auth.mfa.listFactors();
+          if (factors.totp.length > 0) {
+            SecurityService.persistMFAState(true, factors.totp[0].id);
           }
-          throw sessionError;
-        }
-
-        console.log('✅ Session récupérée:', session ? 'Utilisateur connecté' : 'Pas de session');
-
-        if (mounted) {
-          setSession(session);
-          setUser(session?.user ?? null);
-          
-          if (session?.user) {
-            console.log('👤 Chargement du profil utilisateur...');
-            await loadProfile(session.user.id);
-          }
-        }
-
-      } catch (err: any) {
-        console.error('❌ Erreur d\'initialisation auth:', err);
-        
-        if (mounted) {
-          setError(err.message || 'Erreur de connexion');
-        }
-      } finally {
-        if (mounted) {
-          console.log('✅ Initialisation auth terminée');
-          setLoading(false);
         }
       }
-    };
-
-    initializeAuth();
-
-    // Écouter les changements d'état d'authentification
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        console.log('🔄 Changement d\'état auth:', event, session ? 'avec session' : 'sans session');
-        
-        if (mounted) {
-          setSession(session);
-          setUser(session?.user ?? null);
-          
-          if (session?.user) {
-            await loadProfile(session.user.id);
-          } else {
-            setProfile(null);
-          }
-          
-          setLoading(false);
-        }
-      }
-    );
+      setLoading(false);
+    });
 
     return () => {
-      console.log('🧹 Nettoyage AuthProvider');
-      mounted = false;
+      clearTimeout(timeout);
       subscription.unsubscribe();
     };
   }, []);
 
-  const loadProfile = async (userId: string) => {
+  const initAuth = async () => {
     try {
-      console.log('👤 Chargement du profil pour l\'utilisateur:', userId);
+      const { data: { session } } = await supabase.auth.getSession();
       
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
-
-      if (error) {
-        console.error('❌ Erreur lors du chargement du profil:', error);
+      if (session) {
+        setSession(session);
+        setUser(session.user);
+        await loadProfile(session.user);
         
-        // Si le profil n'existe pas, on peut le créer
-        if (error.code === 'PGRST116') {
-          console.log('📝 Création du profil utilisateur...');
-          await createProfile(userId);
-          return;
+        // Vérifier si MFA est activé
+        const mfaStatus = await SecurityService.checkMFAStatus(session.user.id);
+        setMfaEnabled(mfaStatus);
+        
+        // Persister l'état MFA
+        if (mfaStatus) {
+          const { data: factors } = await supabase.auth.mfa.listFactors();
+          if (factors.totp.length > 0) {
+            SecurityService.persistMFAState(true, factors.totp[0].id);
+          }
         }
-        return;
+      } else {
+        // Récupérer l'état MFA persisté si disponible
+        const { enabled } = SecurityService.getPersistedMFAState();
+        if (enabled) {
+          setMfaEnabled(enabled);
+        }
       }
-
-      console.log('✅ Profil chargé:', data);
-      setProfile(data);
-      setError(null);
     } catch (error) {
-      console.error('❌ Erreur profil:', error);
+      console.error('Erreur auth:', error);
+      setError('Erreur de connexion');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const createProfile = async (userId: string) => {
+  const loadProfile = async (user: User) => {
     try {
-      const userData = await supabase.auth.getUser();
-      const email = userData.data.user?.email || '';
-      const nom = userData.data.user?.user_metadata?.nom || email.split('@')[0];
+      // Vérifier si c'est un admin AVANT de charger le profil
+      const adminEmails = [
+        'admin@securecode.fr',
+        'admin@techcorp.com',
+        'testadmin@securecode.fr',
+        'admin@example.com',
+        'administrator@securecode.fr'
+      ];
+      
+      const userIsAdmin = adminEmails.includes(user.email || '');
+      setIsAdmin(userIsAdmin);
 
-      const { data, error } = await supabase
+      // Charger ou créer le profil
+      let { data: profileData, error } = await supabase
         .from('profiles')
-        .insert({
-          id: userId,
-          nom: nom,
-          email: email,
-          niveau: 'Débutant',
-          points: 0,
-          score_securite: 0
-        })
-        .select()
+        .select('*')
+        .eq('id', user.id)
         .single();
 
-      if (error) {
-        console.error('❌ Erreur création profil:', error);
-        return;
+      if (error && error.code === 'PGRST116') {
+        // Créer le profil s'il n'existe pas
+        const newProfile = {
+          id: user.id,
+          nom: user.email?.split('@')[0] || 'Utilisateur',
+          email: user.email || '',
+          niveau: userIsAdmin ? 'Expert' : 'Débutant',
+          points: userIsAdmin ? 1000 : 0,
+          score_securite: userIsAdmin ? 95 : 0
+        };
+
+        const { data: createdProfile } = await supabase
+          .from('profiles')
+          .insert(newProfile)
+          .select()
+          .single();
+
+        profileData = createdProfile;
       }
 
-      console.log('✅ Profil créé:', data);
-      setProfile(data);
+      if (profileData) {
+        setProfile(profileData);
+      }
     } catch (error) {
-      console.error('❌ Erreur création profil:', error);
+      console.error('Erreur profil:', error);
+      // Créer un profil minimal en cas d'erreur
+      setProfile({
+        id: user.id,
+        nom: user.email?.split('@')[0] || 'Utilisateur',
+        email: user.email || '',
+        niveau: 'Débutant',
+        points: 0,
+        score_securite: 0,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      });
     }
   };
 
   const signUp = async (email: string, password: string, nom: string) => {
     try {
-      console.log('📝 Tentative d\'inscription pour:', email);
       setError(null);
+      
+      // Vérifier que le mot de passe respecte la politique de sécurité
+      const passwordValidation = SecurityService.validatePassword(password);
+      if (!passwordValidation.valid) {
+        setError(passwordValidation.message);
+        return { error: passwordValidation.message };
+      }
       
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
-        options: {
-          data: {
-            nom: nom
-          }
-        }
+        options: { data: { nom } }
       });
 
       if (error) {
-        console.error('❌ Erreur inscription:', error);
         setError(getErrorMessage(error.message));
-      } else {
-        console.log('✅ Inscription réussie:', data);
       }
 
       return { error };
     } catch (error: any) {
-      console.error('❌ Erreur inscription (catch):', error);
-      const errorMessage = 'Erreur de connexion au serveur';
-      setError(errorMessage);
-      return { error: { message: errorMessage } };
+      setError('Erreur de connexion');
+      return { error };
     }
   };
 
   const signIn = async (email: string, password: string) => {
     try {
-      console.log('🔐 Tentative de connexion pour:', email);
       setError(null);
       
       const { data, error } = await supabase.auth.signInWithPassword({
@@ -213,41 +215,91 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
 
       if (error) {
-        console.error('❌ Erreur connexion:', error);
         setError(getErrorMessage(error.message));
-      } else {
-        console.log('✅ Connexion réussie:', data);
+        // Enregistrer la tentative de connexion échouée
+        if (data?.user) {
+          await SecurityService.logSecurityEvent(
+            data.user.id,
+            'login_failed',
+            { reason: error.message }
+          );
+        }
+        return { error };
       }
 
-      return { error };
+      // Enregistrer la connexion réussie
+      if (data?.user) {
+        await SecurityService.logSecurityEvent(
+          data.user.id,
+          'login',
+          { method: 'password' }
+        );
+      }
+
+      // Vérifier si l'utilisateur a la 2FA activée
+      if (data?.user) {
+        const { data: factors } = await supabase.auth.mfa.listFactors();
+        const hasMFA = factors.totp.length > 0;
+        setMfaEnabled(hasMFA);
+        
+        // Persister l'état MFA
+        if (hasMFA && factors.totp[0]?.id) {
+          SecurityService.persistMFAState(true, factors.totp[0].id);
+          return { error: null, requiresMFA: true };
+        }
+      }
+
+      return { error: null };
     } catch (error: any) {
-      console.error('❌ Erreur connexion (catch):', error);
-      const errorMessage = 'Erreur de connexion au serveur';
-      setError(errorMessage);
-      return { error: { message: errorMessage } };
+      setError('Erreur de connexion');
+      return { error };
     }
   };
 
   const signOut = async () => {
     try {
-      console.log('👋 Déconnexion...');
-      setError(null);
-      await supabase.auth.signOut();
+      console.log('🚪 Début de la déconnexion...');
+      
+      // Enregistrer l'événement de déconnexion
+      if (user) {
+        await SecurityService.logSecurityEvent(
+          user.id,
+          'login',
+          { action: 'logout' }
+        );
+      }
+      
+      // 1. Nettoyage immédiat de l'état local
+      console.log('🧹 Nettoyage de l\'état local...');
+      setUser(null);
+      setSession(null);
       setProfile(null);
-      console.log('✅ Déconnexion réussie');
+      setIsAdmin(false);
+      setError(null);
+      
+      // Ne pas réinitialiser l'état MFA ici pour qu'il soit disponible à la prochaine connexion
+      // Nous le persistons dans le localStorage
+      
+      // 2. Déconnexion Supabase (en arrière-plan)
+      console.log('📡 Déconnexion Supabase...');
+      await supabase.auth.signOut();
+      
+      console.log('✅ Déconnexion terminée');
+      
     } catch (error) {
-      console.error('❌ Erreur déconnexion:', error);
-      setError('Erreur lors de la déconnexion');
+      console.error('⚠️ Erreur lors de la déconnexion:', error);
+      // Même en cas d'erreur, on force le nettoyage local
+    } finally {
+      // 3. Redirection forcée
+      console.log('🔄 Redirection vers /connexion');
+      window.location.href = '/connexion';
     }
   };
 
   const updateProfile = async (updates: Partial<Profile>) => {
-    if (!user) return;
+    if (!user || !profile) return;
 
     try {
-      console.log('📝 Mise à jour du profil:', updates);
-      setError(null);
-      
       const { data, error } = await supabase
         .from('profiles')
         .update(updates)
@@ -255,67 +307,177 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .select()
         .single();
 
-      if (error) {
-        console.error('❌ Erreur mise à jour profil:', error);
-        setError('Erreur lors de la mise à jour');
-        return;
+      if (!error && data) {
+        setProfile(data);
       }
-
-      console.log('✅ Profil mis à jour:', data);
-      setProfile(data);
     } catch (error) {
-      console.error('❌ Erreur mise à jour profil (catch):', error);
-      setError('Erreur de connexion');
+      console.error('Erreur mise à jour profil:', error);
     }
   };
 
-  const clearError = () => {
-    setError(null);
-  };
+  const clearError = () => setError(null);
 
   const getErrorMessage = (message: string): string => {
-    console.log('🔍 Message d\'erreur reçu:', message);
-    
     if (message.includes('Invalid login credentials')) {
-      return 'Email ou mot de passe incorrect';
+      return 'Invalid login credentials';
     }
     if (message.includes('User already registered')) {
       return 'Un compte existe déjà avec cet email';
     }
     if (message.includes('Password should be at least')) {
-      return 'Le mot de passe doit contenir au moins 6 caractères';
-    }
-    if (message.includes('Unable to validate email address')) {
-      return 'Adresse email invalide';
-    }
-    if (message.includes('Email not confirmed')) {
-      return 'Veuillez confirmer votre email avant de vous connecter';
+      return 'Le mot de passe doit contenir au moins 12 caractères';
     }
     return 'Erreur de connexion';
   };
 
-  const contextValue = {
-    user,
-    profile,
-    session,
-    loading,
-    error,
-    signUp,
-    signIn,
-    signOut,
-    updateProfile,
-    clearError
+  // Configuration MFA
+  const setupMFA = async () => {
+    try {
+      // Générer un nouveau facteur TOTP
+      const { data, error } = await supabase.auth.mfa.enroll({
+        factorType: 'totp'
+      });
+      
+      if (error) {
+        console.error('Erreur lors de la configuration MFA:', error);
+        setError('Erreur lors de la configuration MFA');
+        return null;
+      }
+      
+      // Stocker l'ID du facteur pour l'utiliser lors de la vérification
+      if (data.id) {
+        SecurityService.persistMFAState(false, data.id);
+      }
+      
+      // Retourner le QR code et le secret pour l'affichage
+      return {
+        qrCode: data.totp.qr_code,
+        secret: data.totp.secret
+      };
+    } catch (error) {
+      console.error('Erreur lors de la configuration MFA:', error);
+      setError('Erreur lors de la configuration MFA');
+      return null;
+    }
   };
 
-  console.log('🔄 AuthContext render:', {
-    user: !!user,
-    profile: !!profile,
-    loading,
-    error: !!error
-  });
+  // Vérification du code MFA
+  const verifyMFA = async (token: string) => {
+    try {
+      // Récupérer l'ID du facteur stocké
+      const { factorId } = SecurityService.getPersistedMFAState();
+      
+      if (!factorId) {
+        console.error('ID du facteur MFA non trouvé');
+        setError('Erreur de configuration MFA');
+        return false;
+      }
+      
+      // Vérifier le code avec l'ID du facteur correct
+      const { data, error } = await supabase.auth.mfa.challenge({
+        factorId,
+        code: token
+      });
+      
+      if (error) {
+        console.error('Erreur lors de la vérification MFA:', error);
+        setError('Code MFA invalide');
+        return false;
+      }
+      
+      // Vérifier la réponse du challenge
+      const { data: verifyData, error: verifyError } = await supabase.auth.mfa.verify({
+        factorId,
+        challengeId: data.id,
+        code: token
+      });
+      
+      if (verifyError) {
+        console.error('Erreur lors de la vérification MFA:', verifyError);
+        setError('Code MFA invalide');
+        return false;
+      }
+      
+      // Mettre à jour l'état MFA
+      setMfaEnabled(true);
+      SecurityService.persistMFAState(true, factorId);
+      
+      // Enregistrer l'événement
+      if (user) {
+        await SecurityService.logSecurityEvent(
+          user.id,
+          'mfa_enabled',
+          { method: 'totp' }
+        );
+      }
+      
+      return true;
+    } catch (error) {
+      console.error('Erreur lors de la vérification MFA:', error);
+      setError('Erreur lors de la vérification MFA');
+      return false;
+    }
+  };
+
+  // Désactiver MFA
+  const disableMFA = async () => {
+    try {
+      const { data: factors } = await supabase.auth.mfa.listFactors();
+      
+      if (factors.totp.length === 0) {
+        return true; // Déjà désactivé
+      }
+      
+      const factorId = factors.totp[0].id;
+      const { error } = await supabase.auth.mfa.unenroll({ factorId });
+      
+      if (error) {
+        console.error('Erreur lors de la désactivation MFA:', error);
+        setError('Erreur lors de la désactivation MFA');
+        return false;
+      }
+      
+      // Effacer l'état MFA persisté
+      SecurityService.clearPersistedMFAState();
+      
+      // Mettre à jour l'état
+      setMfaEnabled(false);
+      
+      // Enregistrer l'événement
+      if (user) {
+        await SecurityService.logSecurityEvent(
+          user.id,
+          'mfa_disabled',
+          {}
+        );
+      }
+      
+      return true;
+    } catch (error) {
+      console.error('Erreur lors de la désactivation MFA:', error);
+      setError('Erreur lors de la désactivation MFA');
+      return false;
+    }
+  };
 
   return (
-    <AuthContext.Provider value={contextValue}>
+    <AuthContext.Provider value={{
+      user,
+      profile,
+      session,
+      loading,
+      error,
+      isAdmin,
+      mfaEnabled,
+      signUp,
+      signIn,
+      signOut,
+      updateProfile,
+      clearError,
+      setupMFA,
+      verifyMFA,
+      disableMFA
+    }}>
       {children}
     </AuthContext.Provider>
   );

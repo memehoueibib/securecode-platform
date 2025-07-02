@@ -1,4 +1,6 @@
 import { supabase, LearningProgress, Achievement } from '../lib/supabase';
+import { AdminSyncService } from './adminSyncService';
+import { LearningModule } from '../types/admin';
 
 export class LearningService {
   static async getUserProgress(userId: string): Promise<LearningProgress[]> {
@@ -82,6 +84,37 @@ export class LearningService {
     } catch (error) {
       console.error('Erreur lors de la récupération des réalisations:', error);
       return [];
+    }
+  }
+
+  // Récupérer tous les modules d'apprentissage disponibles
+  static async getAllLearningModules(): Promise<LearningModule[]> {
+    try {
+      // Récupérer les modules depuis la base de données
+      const modules = await AdminSyncService.getAllLearningModules();
+      
+      // Si aucun module n'est trouvé, retourner un tableau vide
+      if (!modules || modules.length === 0) {
+        console.log('⚠️ Aucun module d\'apprentissage trouvé dans la base de données');
+        return [];
+      }
+      
+      // Filtrer les modules publiés uniquement
+      return modules.filter(module => module.status === 'published');
+    } catch (error) {
+      console.error('❌ Erreur lors de la récupération des modules d\'apprentissage:', error);
+      return [];
+    }
+  }
+
+  // Récupérer un module d'apprentissage spécifique
+  static async getLearningModule(moduleId: string): Promise<LearningModule | null> {
+    try {
+      const modules = await AdminSyncService.getAllLearningModules();
+      return modules.find(module => module.id === moduleId) || null;
+    } catch (error) {
+      console.error('❌ Erreur lors de la récupération du module d\'apprentissage:', error);
+      return null;
     }
   }
 

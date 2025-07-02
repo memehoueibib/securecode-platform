@@ -12,11 +12,15 @@ import {
   CheckCircle,
   Zap,
   Shield,
-  Globe
+  Globe,
+  Lock,
+  QrCode,
+  Smartphone
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { APIConfigService } from '../services/apiConfigService';
 import { AI_PROVIDERS } from '../services/aiAnalysisService';
+import { SecurityService } from '../services/securityService';
 
 interface APIConfig {
   id?: string;
@@ -29,7 +33,7 @@ interface APIConfig {
 }
 
 function Settings() {
-  const { user } = useAuth();
+  const { user, mfaEnabled, setupMFA, verifyMFA, disableMFA } = useAuth();
   const [activeTab, setActiveTab] = useState('ai');
   const [configs, setConfigs] = useState<any[]>([]);
   const [showForm, setShowForm] = useState(false);
@@ -37,6 +41,17 @@ function Settings() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [showApiKey, setShowApiKey] = useState<{ [key: string]: boolean }>({});
+  
+  // États pour MFA
+  const [showMFASetup, setShowMFASetup] = useState(false);
+  const [mfaQrCode, setMfaQrCode] = useState('');
+  const [mfaSecret, setMfaSecret] = useState('');
+  const [mfaToken, setMfaToken] = useState('');
+  const [isMFAVerifying, setIsMFAVerifying] = useState(false);
+  
+  // États pour les logs de sécurité
+  const [securityLogs, setSecurityLogs] = useState<any[]>([]);
+  const [loadingLogs, setLoadingLogs] = useState(false);
   
   const [formData, setFormData] = useState<APIConfig>({
     provider: 'openai',
@@ -50,8 +65,11 @@ function Settings() {
   useEffect(() => {
     if (user) {
       loadConfigs();
+      if (activeTab === 'security') {
+        loadSecurityLogs();
+      }
     }
-  }, [user]);
+  }, [user, activeTab]);
 
   const loadConfigs = async () => {
     if (!user) return;
@@ -65,6 +83,20 @@ function Settings() {
       setMessage({ type: 'error', text: 'Erreur lors du chargement des configurations' });
     } finally {
       setLoading(false);
+    }
+  };
+  
+  const loadSecurityLogs = async () => {
+    if (!user) return;
+    
+    try {
+      setLoadingLogs(true);
+      const logs = await SecurityService.getSecurityLogs(user.id);
+      setSecurityLogs(logs);
+    } catch (error) {
+      console.error('Erreur lors du chargement des logs de sécurité:', error);
+    } finally {
+      setLoadingLogs(false);
     }
   };
 
@@ -152,6 +184,48 @@ function Settings() {
       ...prev,
       [configId]: !prev[configId]
     }));
+  };
+  
+  // Fonctions pour MFA
+  const handleSetupMFA = async () => {
+    const result = await setupMFA();
+    if (result) {
+      setMfaQrCode(result.qrCode);
+      setMfaSecret(result.secret);
+      setShowMFASetup(true);
+    }
+  };
+  
+  const handleVerifyMFA = async () => {
+    if (!mfaToken || mfaToken.length !== 6) {
+      setMessage({ type: 'error', text: 'Veuillez entrer un code à 6 chiffres' });
+      return;
+    }
+    
+    setIsMFAVerifying(true);
+    const success = await verifyMFA(mfaToken);
+    setIsMFAVerifying(false);
+    
+    if (success) {
+      setMessage({ type: 'success', text: 'Authentification à deux facteurs activée avec succès' });
+      setShowMFASetup(false);
+      setMfaToken('');
+    } else {
+      setMessage({ type: 'error', text: 'Code invalide. Veuillez réessayer.' });
+    }
+  };
+  
+  const handleDisableMFA = async () => {
+    if (!confirm('Êtes-vous sûr de vouloir désactiver l\'authentification à deux facteurs ? Cela réduira la sécurité de votre compte.')) {
+      return;
+    }
+    
+    const success = await disableMFA();
+    if (success) {
+      setMessage({ type: 'success', text: 'Authentification à deux facteurs désactivée' });
+    } else {
+      setMessage({ type: 'error', text: 'Erreur lors de la désactivation de l\'authentification à deux facteurs' });
+    }
   };
 
   const tabs = [
@@ -488,13 +562,330 @@ function Settings() {
 
       {/* Sécurité */}
       {activeTab === 'security' && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
-            Paramètres de Sécurité
-          </h2>
-          <p className="text-gray-600 dark:text-gray-400">
-            Les paramètres de sécurité seront disponibles dans une prochaine version.
-          </p>
+        <div className="space-y-6">
+          {/* Authentification à deux facteurs */}
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+                  Authentification à Deux Facteurs (2FA)
+                </h2>
+                <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">
+                  Renforcez la sécurité de votre compte avec une authentification supplémentaire
+                </p>
+              </div>
+              <div className="flex items-center">
+                {mfaEnabled ? (
+                  <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">
+                    <CheckCircle className="h-4 w-4 mr-2" />
+                    Activé
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300">
+                    <AlertCircle className="h-4 w-4 mr-2" />
+                    Désactivé
+                  </span>
+                )}
+              </div>
+            </div>
+            
+            <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg mb-4">
+              <div className="flex items-start space-x-3">
+                <Smartphone className="h-5 w-5 text-gray-500 dark:text-gray-400 mt-1" />
+                <div>
+                  <h3 className="font-medium text-gray-900 dark:text-white">Comment ça fonctionne</h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                    L'authentification à deux facteurs ajoute une couche de sécurité supplémentaire à votre compte. 
+                    En plus de votre mot de passe, vous devrez entrer un code temporaire généré par une application 
+                    d'authentification sur votre téléphone (comme Google Authenticator, Authy ou Microsoft Authenticator).
+                  </p>
+                </div>
+              </div>
+            </div>
+            
+            {!showMFASetup && (
+              <div className="flex justify-end">
+                {mfaEnabled ? (
+                  <button
+                    onClick={handleDisableMFA}
+                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                  >
+                    Désactiver 2FA
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleSetupMFA}
+                    className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    <Shield className="h-4 w-4 mr-2" />
+                    Activer 2FA
+                  </button>
+                )}
+              </div>
+            )}
+            
+            {/* Configuration MFA */}
+            {showMFASetup && (
+              <div className="mt-6 border-t border-gray-200 dark:border-gray-700 pt-6">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+                  Configuration de l'authentification à deux facteurs
+                </h3>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <h4 className="font-medium text-gray-900 dark:text-white mb-2">
+                      1. Scannez ce QR code
+                    </h4>
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                      Utilisez une application d'authentification comme Google Authenticator, Authy ou Microsoft Authenticator pour scanner ce QR code.
+                    </p>
+                    
+                    <div className="bg-white p-4 rounded-lg inline-block">
+                      {mfaQrCode && (
+                        <img 
+                          src={mfaQrCode} 
+                          alt="QR Code pour l'authentification à deux facteurs" 
+                          className="w-48 h-48"
+                        />
+                      )}
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <h4 className="font-medium text-gray-900 dark:text-white mb-2">
+                      2. Entrez le code de vérification
+                    </h4>
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                      Entrez le code à 6 chiffres généré par votre application d'authentification.
+                    </p>
+                    
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                          Code à 6 chiffres
+                        </label>
+                        <input
+                          type="text"
+                          value={mfaToken}
+                          onChange={(e) => setMfaToken(e.target.value.replace(/\D/g, '').substring(0, 6))}
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-red-500 focus:border-red-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                          placeholder="123456"
+                          maxLength={6}
+                        />
+                      </div>
+                      
+                      <div className="bg-yellow-50 dark:bg-yellow-900 p-4 rounded-lg">
+                        <h5 className="font-medium text-yellow-800 dark:text-yellow-300 flex items-center">
+                          <AlertCircle className="h-4 w-4 mr-2" />
+                          Clé secrète de secours
+                        </h5>
+                        <p className="text-sm text-yellow-700 dark:text-yellow-400 mt-1">
+                          Si vous ne pouvez pas scanner le QR code, utilisez cette clé secrète dans votre application d'authentification :
+                        </p>
+                        <div className="mt-2 p-2 bg-white dark:bg-gray-800 rounded border border-yellow-200 dark:border-yellow-700 font-mono text-sm break-all">
+                          {mfaSecret}
+                        </div>
+                        <p className="text-xs text-yellow-700 dark:text-yellow-400 mt-2">
+                          Conservez cette clé en lieu sûr. Elle vous permettra de récupérer l'accès à votre compte si vous perdez votre téléphone.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="flex justify-end space-x-3 mt-6">
+                  <button
+                    onClick={() => setShowMFASetup(false)}
+                    className="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    onClick={handleVerifyMFA}
+                    disabled={isMFAVerifying || mfaToken.length !== 6}
+                    className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {isMFAVerifying ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                        Vérification...
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle className="h-4 w-4 mr-2" />
+                        Vérifier et activer
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+          
+          {/* Tableau de bord de sécurité */}
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
+              Tableau de Bord de Sécurité
+            </h2>
+            
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <div className="bg-blue-50 dark:bg-blue-900 p-4 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-medium text-blue-800 dark:text-blue-300">Score de sécurité</h3>
+                  <Shield className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                </div>
+                <div className="mt-2">
+                  <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                    {mfaEnabled ? '85%' : '65%'}
+                  </div>
+                  <div className="w-full bg-blue-200 dark:bg-blue-800 rounded-full h-2 mt-2">
+                    <div 
+                      className="bg-blue-600 h-2 rounded-full" 
+                      style={{ width: mfaEnabled ? '85%' : '65%' }}
+                    ></div>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="bg-green-50 dark:bg-green-900 p-4 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-medium text-green-800 dark:text-green-300">Statut du compte</h3>
+                  <CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400" />
+                </div>
+                <div className="mt-2">
+                  <div className="text-2xl font-bold text-green-600 dark:text-green-400">
+                    Sécurisé
+                  </div>
+                  <p className="text-sm text-green-700 dark:text-green-400 mt-1">
+                    Dernière activité: {new Date().toLocaleDateString()}
+                  </p>
+                </div>
+              </div>
+              
+              <div className="bg-purple-50 dark:bg-purple-900 p-4 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-medium text-purple-800 dark:text-purple-300">Protection</h3>
+                  <Lock className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+                </div>
+                <div className="mt-2">
+                  <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">
+                    {mfaEnabled ? 'Avancée' : 'Basique'}
+                  </div>
+                  <p className="text-sm text-purple-700 dark:text-purple-400 mt-1">
+                    2FA: {mfaEnabled ? 'Activé' : 'Désactivé'}
+                  </p>
+                </div>
+              </div>
+            </div>
+            
+            <h3 className="font-medium text-gray-900 dark:text-white mb-3">
+              Activité récente
+            </h3>
+            
+            {loadingLogs ? (
+              <div className="animate-pulse space-y-3">
+                {[...Array(3)].map((_, i) => (
+                  <div key={i} className="h-12 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                ))}
+              </div>
+            ) : securityLogs.length === 0 ? (
+              <div className="text-center py-6 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                <p className="text-gray-500 dark:text-gray-400">
+                  Aucune activité récente à afficher
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {securityLogs.map((log, index) => (
+                  <div key={index} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                    <div className="flex items-center space-x-3">
+                      {log.type === 'login' && <Lock className="h-4 w-4 text-green-500" />}
+                      {log.type === 'login_failed' && <AlertCircle className="h-4 w-4 text-red-500" />}
+                      {log.type === 'password_change' && <Key className="h-4 w-4 text-blue-500" />}
+                      {log.type === 'mfa_enabled' && <Shield className="h-4 w-4 text-purple-500" />}
+                      <div>
+                        <p className="text-sm font-medium text-gray-900 dark:text-white">
+                          {log.type === 'login' && 'Connexion réussie'}
+                          {log.type === 'login_failed' && 'Tentative de connexion échouée'}
+                          {log.type === 'password_change' && 'Mot de passe modifié'}
+                          {log.type === 'mfa_enabled' && 'Authentification à deux facteurs activée'}
+                        </p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          {new Date(log.timestamp).toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-sm text-gray-500 dark:text-gray-400">
+                      {log.ip_address}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            
+            <div className="mt-4 text-right">
+              <button
+                onClick={loadSecurityLogs}
+                className="text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+              >
+                Actualiser les logs
+              </button>
+            </div>
+          </div>
+          
+          {/* Politique de mot de passe */}
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
+              Politique de Mot de Passe
+            </h2>
+            
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                <div className="flex items-center space-x-3">
+                  <Lock className="h-5 w-5 text-gray-500 dark:text-gray-400" />
+                  <span className="text-gray-900 dark:text-white">Longueur minimale</span>
+                </div>
+                <span className="font-medium text-gray-900 dark:text-white">12 caractères</span>
+              </div>
+              
+              <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                <div className="flex items-center space-x-3">
+                  <Lock className="h-5 w-5 text-gray-500 dark:text-gray-400" />
+                  <span className="text-gray-900 dark:text-white">Complexité requise</span>
+                </div>
+                <span className="font-medium text-gray-900 dark:text-white">Élevée</span>
+              </div>
+              
+              <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                <div className="flex items-center space-x-3">
+                  <Lock className="h-5 w-5 text-gray-500 dark:text-gray-400" />
+                  <span className="text-gray-900 dark:text-white">Expiration</span>
+                </div>
+                <span className="font-medium text-gray-900 dark:text-white">90 jours</span>
+              </div>
+              
+              <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                <div className="flex items-center space-x-3">
+                  <Lock className="h-5 w-5 text-gray-500 dark:text-gray-400" />
+                  <span className="text-gray-900 dark:text-white">Historique</span>
+                </div>
+                <span className="font-medium text-gray-900 dark:text-white">5 derniers mots de passe</span>
+              </div>
+            </div>
+            
+            <div className="mt-6 bg-yellow-50 dark:bg-yellow-900 p-4 rounded-lg">
+              <h3 className="font-medium text-yellow-800 dark:text-yellow-300 flex items-center">
+                <AlertCircle className="h-4 w-4 mr-2" />
+                Recommandations
+              </h3>
+              <ul className="mt-2 space-y-1 text-sm text-yellow-700 dark:text-yellow-400">
+                <li>• Utilisez un gestionnaire de mots de passe</li>
+                <li>• Ne réutilisez jamais les mêmes mots de passe</li>
+                <li>• Incluez des caractères spéciaux, chiffres, majuscules et minuscules</li>
+                <li>• Évitez les informations personnelles facilement devinables</li>
+              </ul>
+            </div>
+          </div>
         </div>
       )}
 
