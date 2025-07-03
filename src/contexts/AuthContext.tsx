@@ -19,6 +19,7 @@ interface AuthContextType {
   setupMFA: () => Promise<{ qrCode: string; secret: string } | null>;
   verifyMFA: (token: string) => Promise<boolean>;
   disableMFA: () => Promise<boolean>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -31,12 +32,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [mfaEnabled, setMfaEnabled] = useState(false);
+  const [authInitialized, setAuthInitialized] = useState(false);
 
   useEffect(() => {
     // Timeout de sécurité pour éviter le loading infini
     const timeout = setTimeout(() => {
-      setLoading(false);
-    }, 3000);
+      if (loading) {
+        console.log('⚠️ Timeout de sécurité déclenché pour éviter le loading infini');
+        setLoading(false);
+      }
+    }, 5000);
 
     initAuth();
 
@@ -59,21 +64,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.log('👤 Utilisateur connecté:', session.user.email);
         setSession(session);
         setUser(session.user);
-        await loadProfile(session.user);
         
-        // Vérifier si MFA est activé
-        const mfaStatus = await SecurityService.checkMFAStatus(session.user.id);
-        setMfaEnabled(mfaStatus);
-        
-        // Persister l'état MFA
-        if (mfaStatus) {
-          const { data: factors } = await supabase.auth.mfa.listFactors();
-          if (factors.totp.length > 0) {
-            SecurityService.persistMFAState(true, factors.totp[0].id);
+        try {
+          await loadProfile(session.user);
+          
+          // Vérifier si MFA est activé
+          const mfaStatus = await SecurityService.checkMFAStatus(session.user.id);
+          setMfaEnabled(mfaStatus);
+          
+          // Persister l'état MFA
+          if (mfaStatus) {
+            const { data: factors } = await supabase.auth.mfa.listFactors();
+            if (factors.totp.length > 0) {
+              SecurityService.persistMFAState(true, factors.totp[0].id);
+            }
           }
+        } catch (err) {
+          console.error('Erreur lors du chargement du profil ou du statut MFA:', err);
         }
       }
+      
       setLoading(false);
+      setAuthInitialized(true);
     });
 
     return () => {
@@ -84,25 +96,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const initAuth = async () => {
     try {
+      console.log('🔍 Initialisation de l\'authentification...');
       const { data: { session } } = await supabase.auth.getSession();
       
       if (session) {
+        console.log('✅ Session trouvée, utilisateur déjà connecté:', session.user.email);
         setSession(session);
         setUser(session.user);
-        await loadProfile(session.user);
         
-        // Vérifier si MFA est activé
-        const mfaStatus = await SecurityService.checkMFAStatus(session.user.id);
-        setMfaEnabled(mfaStatus);
-        
-        // Persister l'état MFA
-        if (mfaStatus) {
-          const { data: factors } = await supabase.auth.mfa.listFactors();
-          if (factors.totp.length > 0) {
-            SecurityService.persistMFAState(true, factors.totp[0].id);
+        try {
+          await loadProfile(session.user);
+          
+          // Vérifier si MFA est activé
+          const mfaStatus = await SecurityService.checkMFAStatus(session.user.id);
+          setMfaEnabled(mfaStatus);
+          
+          // Persister l'état MFA
+          if (mfaStatus) {
+            const { data: factors } = await supabase.auth.mfa.listFactors();
+            if (factors.totp.length > 0) {
+              SecurityService.persistMFAState(true, factors.totp[0].id);
+            }
           }
+        } catch (err) {
+          console.error('Erreur lors du chargement du profil ou du statut MFA:', err);
         }
       } else {
+        console.log('⚠️ Aucune session trouvée, utilisateur non connecté');
         // Récupérer l'état MFA persisté si disponible
         const { enabled } = SecurityService.getPersistedMFAState();
         if (enabled) {
@@ -110,15 +130,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
     } catch (error) {
-      console.error('Erreur auth:', error);
+      console.error('❌ Erreur auth:', error);
       setError('Erreur de connexion');
     } finally {
+      console.log('🏁 Initialisation de l\'authentification terminée');
       setLoading(false);
+      setAuthInitialized(true);
     }
   };
 
   const loadProfile = async (user: User) => {
     try {
+      console.log('🔍 Chargement du profil pour:', user.email);
+      
       // Vérifier si c'est un admin AVANT de charger le profil
       const adminEmails = [
         'admin@securecode.fr',
@@ -138,33 +162,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .eq('id', user.id)
         .single();
 
-      if (error && error.code === 'PGRST116') {
-        // Créer le profil s'il n'existe pas
-        const newProfile = {
-          id: user.id,
-          nom: user.email?.split('@')[0] || 'Utilisateur',
-          email: user.email || '',
-          niveau: userIsAdmin ? 'Expert' : 'Débutant',
-          points: userIsAdmin ? 1000 : 0,
-          score_securite: userIsAdmin ? 95 : 0
-        };
+      if (error) {
+        if (error.code === 'PGRST116') {
+          console.log('⚠️ Profil non trouvé, création d\'un nouveau profil');
+          // Créer le profil s'il n'existe pas
+          const newProfile = {
+            id: user.id,
+            nom: user.email?.split('@')[0] || 'Utilisateur',
+            email: user.email || '',
+            niveau: userIsAdmin ? 'Expert' : 'Débutant',
+            points: userIsAdmin ? 1000 : 0,
+            score_securite: userIsAdmin ? 95 : 0
+          };
 
-        const { data: createdProfile } = await supabase
-          .from('profiles')
-          .insert(newProfile)
-          .select()
-          .single();
+          const { data: createdProfile, error: createError } = await supabase
+            .from('profiles')
+            .insert(newProfile)
+            .select()
+            .single();
 
-        profileData = createdProfile;
+          if (createError) {
+            console.error('❌ Erreur création profil:', createError);
+            throw createError;
+          }
+
+          profileData = createdProfile;
+          console.log('✅ Nouveau profil créé:', profileData);
+        } else {
+          console.error('❌ Erreur chargement profil:', error);
+          throw error;
+        }
       }
 
       if (profileData) {
+        console.log('✅ Profil chargé avec succès');
         setProfile(profileData);
+      } else {
+        console.error('❌ Aucun profil trouvé ou créé');
+        throw new Error('Aucun profil trouvé ou créé');
       }
     } catch (error) {
-      console.error('Erreur profil:', error);
+      console.error('❌ Erreur profil:', error);
       // Créer un profil minimal en cas d'erreur
-      setProfile({
+      const fallbackProfile = {
         id: user.id,
         nom: user.email?.split('@')[0] || 'Utilisateur',
         email: user.email || '',
@@ -173,7 +213,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         score_securite: 0,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
-      });
+      };
+      console.log('⚠️ Utilisation d\'un profil de secours:', fallbackProfile);
+      setProfile(fallbackProfile);
     }
   };
 
@@ -276,13 +318,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setProfile(null);
       setIsAdmin(false);
       setError(null);
-      
-      // Ne pas réinitialiser l'état MFA ici pour qu'il soit disponible à la prochaine connexion
-      // Nous le persistons dans le localStorage
+      setMfaEnabled(false);
       
       // 2. Déconnexion Supabase (en arrière-plan)
       console.log('📡 Déconnexion Supabase...');
       await supabase.auth.signOut();
+      
+      // Effacer l'état MFA persisté
+      SecurityService.clearPersistedMFAState();
       
       console.log('✅ Déconnexion terminée');
       
@@ -460,6 +503,57 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  // Changer le mot de passe
+  const changePassword = async (currentPassword: string, newPassword: string) => {
+    try {
+      if (!user) {
+        setError('Utilisateur non connecté');
+        return false;
+      }
+
+      // Vérifier que le nouveau mot de passe respecte la politique de sécurité
+      const passwordValidation = SecurityService.validatePassword(newPassword);
+      if (!passwordValidation.valid) {
+        setError(passwordValidation.message);
+        return false;
+      }
+
+      // Vérifier le mot de passe actuel en essayant de se reconnecter
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: user.email || '',
+        password: currentPassword
+      });
+
+      if (signInError) {
+        setError('Mot de passe actuel incorrect');
+        return false;
+      }
+
+      // Changer le mot de passe
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: newPassword
+      });
+
+      if (updateError) {
+        setError('Erreur lors du changement de mot de passe');
+        return false;
+      }
+
+      // Enregistrer l'événement de sécurité
+      await SecurityService.logSecurityEvent(
+        user.id,
+        'password_change',
+        { timestamp: new Date().toISOString() }
+      );
+
+      return true;
+    } catch (error) {
+      console.error('Erreur lors du changement de mot de passe:', error);
+      setError('Erreur lors du changement de mot de passe');
+      return false;
+    }
+  };
+
   return (
     <AuthContext.Provider value={{
       user,
@@ -476,7 +570,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       clearError,
       setupMFA,
       verifyMFA,
-      disableMFA
+      disableMFA,
+      changePassword
     }}>
       {children}
     </AuthContext.Provider>

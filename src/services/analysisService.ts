@@ -37,16 +37,37 @@ export class AnalysisService {
             // Fusionner les résultats de l'IA avec les résultats standard
             if (aiResults && aiResults.vulnerabilities) {
               // Convertir les résultats de l'IA au format attendu
-              const aiVulnerabilities = aiResults.vulnerabilities.map((v: any) => ({
-                id: `ai-${v.type}-${v.line}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-                type: v.type as 'xss' | 'injection' | 'secrets',
-                severity: v.severity as 'critique' | 'eleve' | 'moyen' | 'faible',
-                line: v.line,
-                description: v.description,
-                codeSnippet: v.codeSnippet,
-                fix: v.fix,
-                explanation: `IA: ${v.description}`
-              }));
+              const aiVulnerabilities = aiResults.vulnerabilities.map((v: any) => {
+                // Normaliser le type pour s'assurer qu'il est valide
+                let type = v.type.toLowerCase();
+                if (type !== 'xss' && type !== 'injection' && type !== 'secrets') {
+                  if (type.includes('xss')) type = 'xss';
+                  else if (type.includes('inject')) type = 'injection';
+                  else if (type.includes('secret') || type.includes('password') || type.includes('key')) type = 'secrets';
+                  else type = 'xss'; // Type par défaut
+                }
+                
+                // Normaliser la sévérité
+                let severity = v.severity.toLowerCase();
+                if (severity !== 'critique' && severity !== 'eleve' && severity !== 'moyen' && severity !== 'faible') {
+                  if (severity.includes('crit')) severity = 'critique';
+                  else if (severity.includes('high') || severity.includes('elev')) severity = 'eleve';
+                  else if (severity.includes('med') || severity.includes('moy')) severity = 'moyen';
+                  else if (severity.includes('low') || severity.includes('faib')) severity = 'faible';
+                  else severity = 'moyen'; // Sévérité par défaut
+                }
+                
+                return {
+                  id: `ai-${type}-${v.line}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                  type: type as 'xss' | 'injection' | 'secrets',
+                  severity: severity as 'critique' | 'eleve' | 'moyen' | 'faible',
+                  line: v.line,
+                  description: v.description,
+                  codeSnippet: v.codeSnippet,
+                  fix: v.fix,
+                  explanation: `IA: ${v.description}`
+                };
+              });
               
               // Ajouter les vulnérabilités détectées par l'IA
               detectedVulnerabilities = [...detectedVulnerabilities, ...aiVulnerabilities];
@@ -93,27 +114,32 @@ export class AnalysisService {
       const vulnerabilities: Vulnerability[] = [];
       
       if (detectedVulnerabilities.length > 0) {
-        const vulnerabilityInserts = detectedVulnerabilities.map(vuln => ({
-          analyse_id: analyse.id,
-          type: vuln.type,
-          severite: vuln.severity,
-          ligne: vuln.line,
-          description: vuln.description,
-          code_snippet: vuln.codeSnippet,
-          solution: vuln.fix,
-          confidence: 100
-        }));
+        // S'assurer que les types sont valides selon la contrainte de la base de données
+        const validVulnerabilityInserts = detectedVulnerabilities
+          .filter(vuln => ['xss', 'injection', 'secrets'].includes(vuln.type))
+          .map(vuln => ({
+            analyse_id: analyse.id,
+            type: vuln.type,
+            severite: vuln.severity,
+            ligne: vuln.line,
+            description: vuln.description,
+            code_snippet: vuln.codeSnippet,
+            solution: vuln.fix,
+            confidence: 100
+          }));
 
-        const { data: vulnData, error: vulnError } = await supabase
-          .from('vulnerabilities')
-          .insert(vulnerabilityInserts)
-          .select();
+        if (validVulnerabilityInserts.length > 0) {
+          const { data: vulnData, error: vulnError } = await supabase
+            .from('vulnerabilities')
+            .insert(validVulnerabilityInserts)
+            .select();
 
-        if (vulnError) {
-          console.error('❌ Erreur lors de la création des vulnérabilités:', vulnError);
-        } else {
-          vulnerabilities.push(...vulnData);
-          console.log('✅ Vulnérabilités créées:', vulnData.length);
+          if (vulnError) {
+            console.error('❌ Erreur lors de la création des vulnérabilités:', vulnError);
+          } else {
+            vulnerabilities.push(...vulnData);
+            console.log('✅ Vulnérabilités créées:', vulnData.length);
+          }
         }
       }
 

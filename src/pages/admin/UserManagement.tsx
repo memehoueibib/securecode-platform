@@ -15,11 +15,15 @@ import {
   UserPlus,
   Settings,
   X,
-  Save
+  Save,
+  Download,
+  RefreshCw,
+  AlertCircle
 } from 'lucide-react';
 import { AdminUser, UserRole } from '../../types/admin';
 import { AdminService } from '../../services/adminService';
 import { AdminSyncService } from '../../services/adminSyncService';
+import { supabase } from '../../lib/supabase';
 
 function UserManagement() {
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -50,6 +54,7 @@ function UserManagement() {
   });
   const [updating, setUpdating] = useState(false);
   const [message, setMessage] = useState<{type: 'success' | 'error', text: string} | null>(null);
+  const [loadingRetries, setLoadingRetries] = useState(0);
 
   const roles: { value: UserRole; label: string }[] = [
     { value: 'admin_org', label: 'Admin Organisation' },
@@ -72,11 +77,55 @@ function UserManagement() {
   const loadUsers = async () => {
     try {
       setLoading(true);
-      const userData = await AdminService.getAllUsers();
-      setUsers(userData);
+      
+      // Récupérer tous les profils directement depuis Supabase
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .order('created_at', { ascending: false });
+      
+      if (error) {
+        console.error('Erreur lors du chargement des utilisateurs:', error);
+        setMessage({type: 'error', text: 'Erreur lors du chargement des utilisateurs'});
+        
+        // Réessayer si moins de 3 tentatives ont été faites
+        if (loadingRetries < 3) {
+          console.log(`Nouvelle tentative de chargement (${loadingRetries + 1}/3) dans 2 secondes...`);
+          setLoadingRetries(prev => prev + 1);
+          setTimeout(() => {
+            loadUsers();
+          }, 2000);
+        } else {
+          // Utiliser des données simulées après 3 échecs
+          const userData = AdminService.getAllUsers();
+          setUsers(userData);
+        }
+      } else {
+        // Transformer les profils en format AdminUser
+        const adminUsers: AdminUser[] = data.map(profile => ({
+          id: profile.id,
+          email: profile.email,
+          nom: profile.nom,
+          role: AdminService.determineUserRole(profile.email, profile.niveau),
+          status: AdminService.determineUserStatus(profile.updated_at),
+          last_login: profile.updated_at,
+          created_at: profile.created_at,
+          permissions: [],
+          niveau: profile.niveau,
+          points: profile.points,
+          score_securite: profile.score_securite
+        }));
+        
+        setUsers(adminUsers);
+        console.log('Utilisateurs chargés avec succès:', adminUsers.length);
+      }
     } catch (error) {
       console.error('Erreur lors du chargement des utilisateurs:', error);
       setMessage({type: 'error', text: 'Erreur lors du chargement des utilisateurs'});
+      
+      // Utiliser des données simulées en cas d'erreur
+      const userData = AdminService.getAllUsers();
+      setUsers(userData);
     } finally {
       setLoading(false);
     }
@@ -255,6 +304,37 @@ function UserManagement() {
     } catch (error) {
       console.error('Erreur action en lot:', error);
       setMessage({type: 'error', text: 'Erreur lors de l\'action en lot'});
+    }
+  };
+
+  const exportUsers = () => {
+    try {
+      const usersToExport = filteredUsers.map(user => ({
+        id: user.id,
+        nom: user.nom,
+        email: user.email,
+        role: getRoleLabel(user.role),
+        status: user.status,
+        points: user.points,
+        niveau: user.niveau,
+        created_at: user.created_at
+      }));
+      
+      const blob = new Blob([JSON.stringify(usersToExport, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `utilisateurs-securecode-${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      setMessage({type: 'success', text: `${usersToExport.length} utilisateurs exportés avec succès`});
+      setTimeout(() => setMessage(null), 3000);
+    } catch (error) {
+      console.error('Erreur lors de l\'export:', error);
+      setMessage({type: 'error', text: 'Erreur lors de l\'export des utilisateurs'});
     }
   };
 
@@ -538,8 +618,15 @@ function UserManagement() {
             onClick={loadUsers}
             className="flex items-center px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600"
           >
-            <Settings className="h-4 w-4 mr-2" />
+            <RefreshCw className="h-4 w-4 mr-2" />
             Actualiser
+          </button>
+          <button
+            onClick={exportUsers}
+            className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            <Download className="h-4 w-4 mr-2" />
+            Exporter
           </button>
           <button
             onClick={() => setShowAddUser(true)}
@@ -755,6 +842,51 @@ function UserManagement() {
               )}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      {/* Statistiques */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+          <div className="flex items-center">
+            <div className="p-2 bg-blue-100 dark:bg-blue-900 rounded-lg">
+              <Users className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-600 dark:text-gray-400">Total Utilisateurs</p>
+              <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                {users.length}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+          <div className="flex items-center">
+            <div className="p-2 bg-green-100 dark:bg-green-900 rounded-lg">
+              <CheckCircle className="h-6 w-6 text-green-600 dark:text-green-400" />
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-600 dark:text-gray-400">Utilisateurs Actifs</p>
+              <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                {users.filter(u => u.status === 'active').length}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+          <div className="flex items-center">
+            <div className="p-2 bg-purple-100 dark:bg-purple-900 rounded-lg">
+              <Shield className="h-6 w-6 text-purple-600 dark:text-purple-400" />
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-600 dark:text-gray-400">Admins</p>
+              <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                {users.filter(u => u.role === 'admin_org').length}
+              </p>
+            </div>
+          </div>
         </div>
       </div>
 

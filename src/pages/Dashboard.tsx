@@ -39,18 +39,28 @@ function Dashboard() {
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [loadingRetries, setLoadingRetries] = useState(0);
+  const [dataLoaded, setDataLoaded] = useState(false);
 
   // Utiliser useEffect avec dépendances correctes pour éviter la boucle infinie
   useEffect(() => {
     let isMounted = true;
+    let retryTimeout: NodeJS.Timeout;
 
     const loadDashboardData = async () => {
-      if (!user?.id) return;
+      if (!user?.id) {
+        if (isMounted) {
+          setLoading(false);
+        }
+        return;
+      }
 
       try {
         console.log('🔄 Chargement des données du dashboard pour:', user.email);
-        setLoading(true);
-        setError(null);
+        if (isMounted) {
+          setLoading(true);
+          setError(null);
+        }
         
         // Charger les analyses
         console.log('📊 Chargement des analyses...');
@@ -74,12 +84,22 @@ function Dashboard() {
         if (isMounted) {
           setAchievements(userAchievements);
           console.log('✅ Réalisations chargées:', userAchievements.length);
+          setDataLoaded(true);
         }
         
       } catch (error) {
         console.error('❌ Erreur lors du chargement des données:', error);
         if (isMounted) {
           setError('Erreur lors du chargement des données');
+          
+          // Réessayer si moins de 3 tentatives ont été faites
+          if (loadingRetries < 3) {
+            console.log(`⚠️ Nouvelle tentative de chargement (${loadingRetries + 1}/3) dans 2 secondes...`);
+            setLoadingRetries(prev => prev + 1);
+            retryTimeout = setTimeout(() => {
+              loadDashboardData();
+            }, 2000);
+          }
         }
       } finally {
         if (isMounted) {
@@ -93,6 +113,9 @@ function Dashboard() {
     // Cleanup function pour éviter les fuites mémoire
     return () => {
       isMounted = false;
+      if (retryTimeout) {
+        clearTimeout(retryTimeout);
+      }
     };
   }, [user?.id]); // Dépendance uniquement sur user.id
 
@@ -243,13 +266,55 @@ function Dashboard() {
     timestamp: scan.created_at
   }));
 
-  if (loading) {
+  const handleRetry = () => {
+    setError(null);
+    setLoading(true);
+    setLoadingRetries(0);
+    setDataLoaded(false);
+    
+    // Forcer une nouvelle tentative de chargement
+    if (user?.id) {
+      const loadData = async () => {
+        try {
+          // Charger les analyses
+          const userAnalyses = await AnalysisService.getUserAnalyses(user.id);
+          setAnalyses(userAnalyses);
+          
+          // Charger les statistiques
+          const analysisStats = await AnalysisService.getAnalysisStats(user.id);
+          setStats(analysisStats);
+          
+          // Charger les réalisations
+          const userAchievements = await LearningService.getUserAchievements(user.id);
+          setAchievements(userAchievements);
+          
+          setDataLoaded(true);
+        } catch (error) {
+          console.error('Erreur lors du rechargement des données:', error);
+          setError('Erreur lors du chargement des données');
+        } finally {
+          setLoading(false);
+        }
+      };
+      
+      loadData();
+    } else {
+      setLoading(false);
+    }
+  };
+
+  if (loading && !dataLoaded) {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="flex items-center justify-center min-h-96">
           <div className="text-center">
             <Loader className="h-8 w-8 animate-spin text-red-600 mx-auto mb-4" />
             <p className="text-gray-600 dark:text-gray-400">Chargement de vos données...</p>
+            {loadingRetries > 0 && (
+              <p className="text-sm text-gray-500 dark:text-gray-500 mt-2">
+                Tentative {loadingRetries}/3...
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -266,9 +331,10 @@ function Dashboard() {
           </h2>
           <p className="text-gray-600 dark:text-gray-400 mb-4">{error}</p>
           <button
-            onClick={() => window.location.reload()}
+            onClick={handleRetry}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
           >
+            <RefreshCw className="h-4 w-4 mr-2 inline" />
             Réessayer
           </button>
         </div>

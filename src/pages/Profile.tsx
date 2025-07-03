@@ -11,15 +11,22 @@ import {
   Save,
   X,
   Trophy,
-  Target
+  Target,
+  Key,
+  Eye,
+  EyeOff,
+  AlertCircle,
+  CheckCircle,
+  Loader
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { AnalysisService } from '../services/analysisService';
 import { LearningService } from '../services/learningService';
 import { Achievement } from '../lib/supabase';
+import { SecurityService } from '../services/securityService';
 
 function Profile() {
-  const { user, profile, updateProfile } = useAuth();
+  const { user, profile, updateProfile, changePassword } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState({
     nom: profile?.nom || '',
@@ -33,6 +40,22 @@ function Profile() {
     tendance: '+12%'
   });
   const [loading, setLoading] = useState(true);
+  
+  // États pour le changement de mot de passe
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: ''
+  });
+  const [showPassword, setShowPassword] = useState({
+    current: false,
+    new: false,
+    confirm: false
+  });
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
 
   useEffect(() => {
     if (user && profile) {
@@ -78,6 +101,58 @@ function Profile() {
       email: profile?.email || ''
     });
     setIsEditing(false);
+  };
+  
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordError(null);
+    setPasswordSuccess(null);
+    
+    // Validation
+    if (!passwordForm.currentPassword || !passwordForm.newPassword || !passwordForm.confirmPassword) {
+      setPasswordError('Veuillez remplir tous les champs');
+      return;
+    }
+    
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      setPasswordError('Les nouveaux mots de passe ne correspondent pas');
+      return;
+    }
+    
+    // Vérifier la complexité du mot de passe
+    const passwordValidation = SecurityService.validatePassword(passwordForm.newPassword);
+    if (!passwordValidation.valid) {
+      setPasswordError(passwordValidation.message);
+      return;
+    }
+    
+    setIsChangingPassword(true);
+    
+    try {
+      // Appeler la fonction de changement de mot de passe
+      const success = await changePassword(passwordForm.currentPassword, passwordForm.newPassword);
+      
+      if (success) {
+        setPasswordSuccess('Mot de passe modifié avec succès');
+        setPasswordForm({
+          currentPassword: '',
+          newPassword: '',
+          confirmPassword: ''
+        });
+        
+        setTimeout(() => {
+          setShowPasswordForm(false);
+          setPasswordSuccess(null);
+        }, 3000);
+      } else {
+        // L'erreur est déjà définie dans la fonction changePassword
+      }
+    } catch (error) {
+      console.error('Erreur lors du changement de mot de passe:', error);
+      setPasswordError('Erreur lors du changement de mot de passe');
+    } finally {
+      setIsChangingPassword(false);
+    }
   };
 
   const getProgressionStats = () => {
@@ -236,8 +311,147 @@ function Profile() {
                   <span className="text-gray-900 dark:text-white">{memberSince}</span>
                 </div>
               </div>
+              
+              <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+                <button
+                  onClick={() => setShowPasswordForm(true)}
+                  className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  <Key className="h-4 w-4 mr-2" />
+                  Changer mon mot de passe
+                </button>
+              </div>
             </div>
           </div>
+          
+          {/* Formulaire de changement de mot de passe */}
+          {showPasswordForm && (
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+                  Changer mon mot de passe
+                </h2>
+                <button
+                  onClick={() => setShowPasswordForm(false)}
+                  className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              
+              {passwordError && (
+                <div className="mb-4 p-3 bg-red-50 dark:bg-red-900 text-red-700 dark:text-red-300 rounded-lg flex items-center">
+                  <AlertCircle className="h-5 w-5 mr-2" />
+                  {passwordError}
+                </div>
+              )}
+              
+              {passwordSuccess && (
+                <div className="mb-4 p-3 bg-green-50 dark:bg-green-900 text-green-700 dark:text-green-300 rounded-lg flex items-center">
+                  <CheckCircle className="h-5 w-5 mr-2" />
+                  {passwordSuccess}
+                </div>
+              )}
+              
+              <form onSubmit={handleChangePassword} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Mot de passe actuel
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showPassword.current ? "text" : "password"}
+                      value={passwordForm.currentPassword}
+                      onChange={(e) => setPasswordForm({...passwordForm, currentPassword: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-red-500 focus:border-red-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white pr-10"
+                      required
+                    />
+                    <button
+                      type="button"
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                      onClick={() => setShowPassword({...showPassword, current: !showPassword.current})}
+                    >
+                      {showPassword.current ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                    </button>
+                  </div>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Nouveau mot de passe
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showPassword.new ? "text" : "password"}
+                      value={passwordForm.newPassword}
+                      onChange={(e) => setPasswordForm({...passwordForm, newPassword: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-red-500 focus:border-red-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white pr-10"
+                      required
+                    />
+                    <button
+                      type="button"
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                      onClick={() => setShowPassword({...showPassword, new: !showPassword.new})}
+                    >
+                      {showPassword.new ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Le mot de passe doit contenir au moins 12 caractères, une majuscule, une minuscule, un chiffre et un caractère spécial.
+                  </p>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Confirmer le nouveau mot de passe
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showPassword.confirm ? "text" : "password"}
+                      value={passwordForm.confirmPassword}
+                      onChange={(e) => setPasswordForm({...passwordForm, confirmPassword: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-red-500 focus:border-red-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white pr-10"
+                      required
+                    />
+                    <button
+                      type="button"
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                      onClick={() => setShowPassword({...showPassword, confirm: !showPassword.confirm})}
+                    >
+                      {showPassword.confirm ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                    </button>
+                  </div>
+                </div>
+                
+                <div className="flex justify-end space-x-3 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => setShowPasswordForm(false)}
+                    className="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isChangingPassword}
+                    className="flex items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isChangingPassword ? (
+                      <>
+                        <Loader className="h-4 w-4 mr-2 animate-spin" />
+                        Modification...
+                      </>
+                    ) : (
+                      <>
+                        <Save className="h-4 w-4 mr-2" />
+                        Changer le mot de passe
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
 
           {/* Statistiques détaillées */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
@@ -301,7 +515,7 @@ function Profile() {
                   className={`p-4 rounded-lg border ${
                     achievement.debloque
                       ? 'bg-green-50 dark:bg-green-900 border-green-200 dark:border-green-700'
-                      : 'bg-gray-50 dark:bg-gray-700 border-gray-200 dark:border-gray-600'
+                      : 'bg-gray-50 dark:bg-gray-700 border-gray-200 dark:border-gray-600 opacity-60'
                   }`}
                 >
                   <div className="flex items-center space-x-3">

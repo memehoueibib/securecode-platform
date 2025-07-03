@@ -356,6 +356,116 @@ export class AdminService {
     }
   }
 
+  // Récupérer toutes les règles de sécurité
+  static async getAllSecurityRules(): Promise<SecurityRule[]> {
+    try {
+      // Simuler des règles de sécurité pour la démonstration
+      return [
+        {
+          id: '1',
+          name: 'Détection XSS innerHTML',
+          description: 'Détecte l\'utilisation dangereuse de innerHTML avec des données utilisateur',
+          language: 'javascript',
+          pattern: 'innerHTML\\s*=\\s*.*(?:req\\.|request\\.|input|user|params|query|body)',
+          severity: 'high',
+          category: 'XSS',
+          customMessage: 'Utilisation dangereuse de innerHTML détectée',
+          fixSuggestion: 'Utilisez textContent au lieu de innerHTML',
+          isActive: true,
+          createdBy: 'Admin',
+          createdAt: new Date(Date.now() - 604800000).toISOString()
+        },
+        {
+          id: '2',
+          name: 'Détection eval()',
+          description: 'Détecte l\'utilisation de eval() qui peut conduire à l\'injection de code',
+          language: 'javascript',
+          pattern: 'eval\\s*\\(',
+          severity: 'critical',
+          category: 'Injection',
+          customMessage: 'Utilisation de eval() détectée',
+          fixSuggestion: 'Évitez eval(), utilisez JSON.parse() pour les données JSON',
+          isActive: true,
+          createdBy: 'Admin',
+          createdAt: new Date(Date.now() - 518400000).toISOString()
+        },
+        {
+          id: '3',
+          name: 'Détection de secrets',
+          description: 'Détecte les mots de passe et clés API codés en dur',
+          language: 'javascript',
+          pattern: '(password|api_key|secret|token)\\s*[=:]\\s*[\'"][^\'"]{6,}[\'"]',
+          severity: 'high',
+          category: 'Secrets',
+          customMessage: 'Secret codé en dur détecté',
+          fixSuggestion: 'Utilisez des variables d\'environnement pour les secrets',
+          isActive: true,
+          createdBy: 'Admin',
+          createdAt: new Date(Date.now() - 432000000).toISOString()
+        },
+        {
+          id: '4',
+          name: 'Injection SQL',
+          description: 'Détecte les vulnérabilités d\'injection SQL',
+          language: 'javascript',
+          pattern: 'SELECT.*FROM.*WHERE.*\\+',
+          severity: 'critical',
+          category: 'Injection',
+          customMessage: 'Vulnérabilité d\'injection SQL détectée',
+          fixSuggestion: 'Utilisez des requêtes préparées avec des paramètres liés',
+          isActive: false,
+          createdBy: 'Admin',
+          createdAt: new Date(Date.now() - 345600000).toISOString()
+        }
+      ];
+    } catch (error) {
+      console.error('❌ Erreur AdminService.getAllSecurityRules:', error);
+      return [];
+    }
+  }
+
+  // Créer une nouvelle règle de sécurité
+  static async createSecurityRule(rule: SecurityRule): Promise<boolean> {
+    try {
+      console.log('🔧 AdminService: Création règle de sécurité:', rule.name);
+      
+      // Dans une implémentation réelle, on enregistrerait la règle dans Supabase
+      
+      return true;
+    } catch (error) {
+      console.error('❌ Erreur AdminService.createSecurityRule:', error);
+      return false;
+    }
+  }
+
+  // Mettre à jour le statut d'une règle de sécurité
+  static async updateSecurityRuleStatus(ruleId: string, isActive: boolean): Promise<boolean> {
+    try {
+      console.log('🔧 AdminService: Mise à jour statut règle:', ruleId, isActive);
+      
+      // Dans une implémentation réelle, on mettrait à jour la règle dans Supabase
+      
+      return true;
+    } catch (error) {
+      console.error('❌ Erreur AdminService.updateSecurityRuleStatus:', error);
+      return false;
+    }
+  }
+
+  // Supprimer une règle de sécurité
+  static async deleteSecurityRule(ruleId: string): Promise<boolean> {
+    try {
+      console.log('🔧 AdminService: Suppression règle:', ruleId);
+      
+      // Dans une implémentation réelle, on supprimerait la règle dans Supabase
+      
+      return true;
+    } catch (error) {
+      console.error('❌ Erreur AdminService.deleteSecurityRule:', error);
+      return false;
+    }
+  }
+
   // Fonctions utilitaires privées
   static determineUserRole(email: string, niveau?: string): any {
     const adminEmails = [
